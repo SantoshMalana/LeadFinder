@@ -61,7 +61,7 @@ export async function POST() {
 
       // Score in parallel batches of 5
       const BATCH_SIZE = 5
-      const scoredPosts = []
+      const scoredPosts: { post: any; score: number; reason: string }[] = []
 
       for (let i = 0; i < posts.length; i += BATCH_SIZE) {
         const batch = posts.slice(i, i + BATCH_SIZE)
