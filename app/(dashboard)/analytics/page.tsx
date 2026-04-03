@@ -10,24 +10,23 @@ export default async function AnalyticsPage() {
 
   const campaigns = await getCampaigns()
 
-  // Get lead stats
   const { data: leads } = await supabase
     .from('leads')
     .select('score, status, platform, found_at, campaign_id')
     .in('campaign_id', campaigns.map(c => c.id))
 
   const total = leads?.length || 0
-  const avgScore = leads?.length
-    ? (leads.reduce((sum, l) => sum + (l.score || 0), 0) / leads.length).toFixed(1)
+  const scoredLeads = leads?.filter(l => l.score !== null) || []
+  const avgScore = scoredLeads.length
+    ? (scoredLeads.reduce((sum, l) => sum + (l.score || 0), 0) / scoredLeads.length).toFixed(1)
     : '0'
-  const hotLeads = leads?.filter(l => l.score >= 9).length || 0
+  const hotLeads = leads?.filter(l => (l.score ?? 0) >= 9).length || 0
   const replied = leads?.filter(l => l.status === 'replied').length || 0
 
-  // Leads per campaign
   const campaignStats = campaigns.map(c => ({
     name: c.name,
     count: leads?.filter(l => l.campaign_id === c.id).length || 0,
-    hot: leads?.filter(l => l.campaign_id === c.id && l.score >= 9).length || 0,
+    hot: leads?.filter(l => l.campaign_id === c.id && (l.score ?? 0) >= 9).length || 0,
   }))
 
   return (
@@ -46,8 +45,6 @@ export default async function AnalyticsPage() {
       </div>
 
       <div className="max-w-4xl mx-auto px-6 py-8 space-y-8">
-
-        {/* Stats Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
             { label: 'Total Leads', value: total, color: 'text-white' },
@@ -65,7 +62,6 @@ export default async function AnalyticsPage() {
           ))}
         </div>
 
-        {/* Campaign Breakdown */}
         <div>
           <h2 className="text-lg font-semibold mb-4">By Campaign</h2>
           <div className="space-y-3">
@@ -84,14 +80,12 @@ export default async function AnalyticsPage() {
                 </div>
               </div>
             ))}
-
             {campaignStats.length === 0 && (
               <p className="text-gray-600 text-sm">No campaign data yet</p>
             )}
           </div>
         </div>
 
-        {/* Reply Rate */}
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
           <h2 className="text-lg font-semibold mb-2">Reply Rate</h2>
           <div className="flex items-center gap-4">
@@ -109,7 +103,6 @@ export default async function AnalyticsPage() {
             {replied} replied out of {total} leads
           </p>
         </div>
-
       </div>
     </div>
   )
