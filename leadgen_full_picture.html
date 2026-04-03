@@ -1,0 +1,476 @@
+
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-size: 14px; }
+
+  .tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 0.5px solid var(--color-border-tertiary);
+    margin-bottom: 1.5rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab {
+    padding: 10px 20px;
+    font-size: 13px;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    white-space: nowrap;
+    user-select: none;
+    background: none;
+    border-top: none;
+    border-left: none;
+    border-right: none;
+    font-family: inherit;
+  }
+  .tab.active {
+    color: var(--color-text-primary);
+    border-bottom-color: var(--color-text-primary);
+  }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* FILE TREE */
+  .tree { font-family: var(--font-mono); font-size: 13px; line-height: 2; }
+  .tree-item { display: flex; align-items: center; gap: 8px; padding: 2px 0; cursor: default; }
+  .tree-item:hover { background: var(--color-background-secondary); border-radius: 4px; }
+  .indent-1 { padding-left: 20px; }
+  .indent-2 { padding-left: 40px; }
+  .indent-3 { padding-left: 60px; }
+  .folder { color: var(--color-text-info); font-weight: 500; }
+  .file-ts { color: #3178c6; }
+  .file-js { color: #f7df1e; }
+  .file-env { color: var(--color-text-warning); }
+  .file-md { color: var(--color-text-secondary); }
+  .file-json { color: var(--color-text-success); }
+  .file-py { color: #3776ab; }
+  .comment { color: var(--color-text-tertiary); font-size: 11px; margin-left: auto; padding-right: 8px; }
+
+  /* API KEYS */
+  .key-group { margin-bottom: 1.5rem; }
+  .key-group-title {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-text-secondary);
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 0.5px solid var(--color-border-tertiary);
+  }
+  .key-row {
+    display: grid;
+    grid-template-columns: 220px 1fr auto;
+    gap: 12px;
+    align-items: start;
+    padding: 10px 0;
+    border-bottom: 0.5px solid var(--color-border-tertiary);
+    font-size: 13px;
+  }
+  .key-name { font-family: var(--font-mono); color: var(--color-text-info); font-size: 12px; }
+  .key-desc { color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .badge-free { background: var(--color-background-success); color: var(--color-text-success); }
+  .badge-paid { background: var(--color-background-warning); color: var(--color-text-warning); }
+  .badge-skip { background: var(--color-background-secondary); color: var(--color-text-tertiary); }
+
+  /* SCHEMA */
+  .schema-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .schema-table {
+    background: var(--color-background-primary);
+    border: 0.5px solid var(--color-border-tertiary);
+    border-radius: var(--border-radius-lg);
+    overflow: hidden;
+  }
+  .schema-header {
+    background: var(--color-background-secondary);
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--color-text-primary);
+    border-bottom: 0.5px solid var(--color-border-tertiary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .schema-row {
+    padding: 7px 14px;
+    font-size: 12px;
+    font-family: var(--font-mono);
+    display: flex;
+    gap: 8px;
+    border-bottom: 0.5px solid var(--color-border-tertiary);
+    align-items: center;
+  }
+  .schema-row:last-child { border-bottom: none; }
+  .col-name { color: var(--color-text-primary); min-width: 130px; }
+  .col-type { color: var(--color-text-info); font-size: 11px; }
+  .col-pk { background: var(--color-background-info); color: var(--color-text-info); font-size: 10px; padding: 1px 5px; border-radius: 3px; margin-left: auto; }
+  .col-fk { background: var(--color-background-warning); color: var(--color-text-warning); font-size: 10px; padding: 1px 5px; border-radius: 3px; margin-left: auto; }
+
+  /* FLOW */
+  .flow-steps { display: flex; flex-direction: column; gap: 0; }
+  .flow-step {
+    display: flex;
+    gap: 16px;
+    padding: 16px 0;
+    border-bottom: 0.5px solid var(--color-border-tertiary);
+    align-items: flex-start;
+  }
+  .flow-step:last-child { border-bottom: none; }
+  .step-num {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--color-background-secondary);
+    border: 0.5px solid var(--color-border-secondary);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 500;
+    color: var(--color-text-secondary);
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .step-content { flex: 1; }
+  .step-title { font-size: 14px; font-weight: 500; color: var(--color-text-primary); margin-bottom: 4px; }
+  .step-detail { font-size: 12px; color: var(--color-text-secondary); line-height: 1.6; }
+  .step-code {
+    margin-top: 8px;
+    background: var(--color-background-secondary);
+    border: 0.5px solid var(--color-border-tertiary);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--color-text-secondary);
+    line-height: 1.7;
+  }
+  .kw { color: var(--color-text-info); }
+  .str { color: var(--color-text-success); }
+  .fn { color: var(--color-text-warning); }
+</style>
+
+<div class="tabs">
+  <button class="tab active" onclick="show('structure')">File Structure</button>
+  <button class="tab" onclick="show('keys')">API Keys Needed</button>
+  <button class="tab" onclick="show('schema')">DB Schema</button>
+  <button class="tab" onclick="show('flow')">Data Flow Code</button>
+</div>
+
+<!-- PANEL 1: FILE STRUCTURE -->
+<div class="panel active" id="panel-structure">
+  <div class="tree">
+    <div class="tree-item"><span class="folder">📁 leadfinder/</span><span class="comment">root of project</span></div>
+
+    <div class="tree-item indent-1"><span class="folder">📁 app/</span><span class="comment">Next.js App Router</span></div>
+    <div class="tree-item indent-2"><span class="folder">📁 (auth)/</span></div>
+    <div class="tree-item indent-3"><span class="file-ts">login/page.tsx</span><span class="comment">Google OAuth login</span></div>
+    <div class="tree-item indent-2"><span class="folder">📁 (dashboard)/</span></div>
+    <div class="tree-item indent-3"><span class="file-ts">page.tsx</span><span class="comment">Main lead feed</span></div>
+    <div class="tree-item indent-3"><span class="file-ts">campaigns/page.tsx</span><span class="comment">Create/edit campaigns</span></div>
+    <div class="tree-item indent-3"><span class="file-ts">analytics/page.tsx</span><span class="comment">Charts & keyword stats</span></div>
+    <div class="tree-item indent-2"><span class="folder">📁 api/</span></div>
+    <div class="tree-item indent-3"><span class="file-ts">scrape/route.ts</span><span class="comment">Trigger manual scrape</span></div>
+    <div class="tree-item indent-3"><span class="file-ts">score/route.ts</span><span class="comment">AI scoring endpoint</span></div>
+    <div class="tree-item indent-3"><span class="file-ts">reply/route.ts</span><span class="comment">Generate outreach DM</span></div>
+    <div class="tree-item indent-3"><span class="file-ts">webhooks/stripe/route.ts</span><span class="comment">Stripe billing events</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">layout.tsx</span></div>
+
+    <div class="tree-item indent-1"><span class="folder">📁 components/</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">LeadCard.tsx</span><span class="comment">Single lead with score</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">ScoreBadge.tsx</span><span class="comment">1-10 score pill</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">ReplyModal.tsx</span><span class="comment">Generate & copy DM</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">CampaignForm.tsx</span><span class="comment">Keyword + platform setup</span></div>
+
+    <div class="tree-item indent-1"><span class="folder">📁 lib/</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">supabase/client.ts</span><span class="comment">Browser Supabase client</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">supabase/server.ts</span><span class="comment">Server Supabase client</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">redis.ts</span><span class="comment">Upstash Redis client</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">groq.ts</span><span class="comment">Groq API wrapper</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">gemini.ts</span><span class="comment">Gemini Flash wrapper</span></div>
+
+    <div class="tree-item indent-1"><span class="folder">📁 inngest/</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">client.ts</span><span class="comment">Inngest client init</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">scrapeJob.ts</span><span class="comment">Cron: scrape Reddit every 6h</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">scoreJob.ts</span><span class="comment">Score new posts with AI</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">alertJob.ts</span><span class="comment">Send email/Slack on score≥9</span></div>
+
+    <div class="tree-item indent-1"><span class="folder">📁 scrapers/</span><span class="comment">Runs on DigitalOcean (or Vercel cron)</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">reddit.ts</span><span class="comment">Snoowrap Reddit scraper</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">apify.ts</span><span class="comment">Apify actor caller (Twitter)</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">dedup.ts</span><span class="comment">Redis dedup check</span></div>
+
+    <div class="tree-item indent-1"><span class="folder">📁 actions/</span><span class="comment">Next.js Server Actions</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">campaign.actions.ts</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">lead.actions.ts</span></div>
+
+    <div class="tree-item indent-1"><span class="folder">📁 types/</span></div>
+    <div class="tree-item indent-2"><span class="file-ts">index.ts</span><span class="comment">Campaign, Lead, User types</span></div>
+
+    <div class="tree-item indent-1"><span class="file-env">.env.local</span><span class="comment">All API keys go here</span></div>
+    <div class="tree-item indent-1"><span class="file-json">package.json</span></div>
+    <div class="tree-item indent-1"><span class="file-md">README.md</span></div>
+  </div>
+</div>
+
+<!-- PANEL 2: API KEYS -->
+<div class="panel" id="panel-keys">
+
+  <div class="key-group">
+    <div class="key-group-title">Supabase — DB, Auth, Realtime</div>
+    <div class="key-row">
+      <span class="key-name">NEXT_PUBLIC_SUPABASE_URL</span>
+      <span class="key-desc">Your project URL from supabase.com dashboard</span>
+      <span class="badge badge-free">FREE</span>
+    </div>
+    <div class="key-row">
+      <span class="key-name">NEXT_PUBLIC_SUPABASE_ANON_KEY</span>
+      <span class="key-desc">Public anon key — safe to expose in browser</span>
+      <span class="badge badge-free">FREE</span>
+    </div>
+    <div class="key-row">
+      <span class="key-name">SUPABASE_SERVICE_ROLE_KEY</span>
+      <span class="key-desc">Server-only key for admin DB operations. Never expose to frontend.</span>
+      <span class="badge badge-free">FREE</span>
+    </div>
+  </div>
+
+  <div class="key-group">
+    <div class="key-group-title">Upstash Redis — Deduplication</div>
+    <div class="key-row">
+      <span class="key-name">UPSTASH_REDIS_REST_URL</span>
+      <span class="key-desc">From upstash.com → create a serverless Redis DB</span>
+      <span class="badge badge-free">FREE</span>
+    </div>
+    <div class="key-row">
+      <span class="key-name">UPSTASH_REDIS_REST_TOKEN</span>
+      <span class="key-desc">Auth token for Upstash REST API</span>
+      <span class="badge badge-free">FREE</span>
+    </div>
+  </div>
+
+  <div class="key-group">
+    <div class="key-group-title">Reddit API — Core scraping source</div>
+    <div class="key-row">
+      <span class="key-name">REDDIT_CLIENT_ID</span>
+      <span class="key-desc">From reddit.com/prefs/apps → create "script" app</span>
+      <span class="badge badge-free">FREE</span>
+    </div>
+    <div class="key-row">
+      <span class="key-name">REDDIT_CLIENT_SECRET</span>
+      <span class="key-desc">Secret from the same Reddit app page</span>
+      <span class="badge badge-free">FREE</span>
+    </div>
+    <div class="key-row">
+      <span class="key-name">REDDIT_USERNAME</span>
+      <span class="key-desc">Your Reddit account username</span>
+      <span class="badge badge-free">FREE</span>
+    </div>
+    <div class="key-row">
+      <span class="key-name">REDDIT_PASSWORD</span>
+      <span class="key-desc">Your Reddit account password (for script auth)</span>
+      <span class="badge badge-free">FREE</span>
+    </div>
+  </div>
+
+  <div class="key-group">
+    <div class="key-group-title">AI Models — Lead scoring + Reply generation</div>
+    <div class="key-row">
+      <span class="key-name">GROQ_API_KEY</span>
+      <span class="key-desc">From console.groq.com — used for fast, cheap lead scoring (llama-3.3-70b)</span>
+      <span class="badge badge-free">FREE tier</span>
+    </div>
+    <div class="key-row">
+      <span class="key-name">GEMINI_API_KEY</span>
+      <span class="key-desc">From aistudio.google.com — used for reply generation (gemini-1.5-flash)</span>
+      <span class="badge badge-free">FREE tier</span>
+    </div>
+  </div>
+
+  <div class="key-group">
+    <div class="key-group-title">Inngest — Background jobs / cron</div>
+    <div class="key-row">
+      <span class="key-name">INNGEST_EVENT_KEY</span>
+      <span class="key-desc">From inngest.com dashboard after creating an app</span>
+      <span class="badge badge-free">FREE</span>
+    </div>
+    <div class="key-row">
+      <span class="key-name">INNGEST_SIGNING_KEY</span>
+      <span class="key-desc">Used to verify webhook payloads from Inngest</span>
+      <span class="badge badge-free">FREE</span>
+    </div>
+  </div>
+
+  <div class="key-group">
+    <div class="key-group-title">Resend — Email alerts</div>
+    <div class="key-row">
+      <span class="key-name">RESEND_API_KEY</span>
+      <span class="key-desc">From resend.com — 3000 free emails/month</span>
+      <span class="badge badge-free">FREE</span>
+    </div>
+  </div>
+
+  <div class="key-group">
+    <div class="key-group-title">Phase 4+ (skip for now)</div>
+    <div class="key-row">
+      <span class="key-name">APIFY_API_TOKEN</span>
+      <span class="key-desc">For Twitter/LinkedIn scraping via Apify actors</span>
+      <span class="badge badge-paid">~$5/mo</span>
+    </div>
+    <div class="key-row">
+      <span class="key-name">STRIPE_SECRET_KEY</span>
+      <span class="key-desc">Stripe billing for paid plans</span>
+      <span class="badge badge-skip">Phase 4</span>
+    </div>
+    <div class="key-row">
+      <span class="key-name">STRIPE_WEBHOOK_SECRET</span>
+      <span class="key-desc">Verify Stripe webhook events</span>
+      <span class="badge badge-skip">Phase 4</span>
+    </div>
+  </div>
+</div>
+
+<!-- PANEL 3: DB SCHEMA -->
+<div class="panel" id="panel-schema">
+  <div class="schema-grid">
+
+    <div class="schema-table">
+      <div class="schema-header">👤 users</div>
+      <div class="schema-row"><span class="col-name">id</span><span class="col-type">uuid</span><span class="col-pk">PK</span></div>
+      <div class="schema-row"><span class="col-name">email</span><span class="col-type">text</span></div>
+      <div class="schema-row"><span class="col-name">name</span><span class="col-type">text</span></div>
+      <div class="schema-row"><span class="col-name">plan</span><span class="col-type">text</span></div>
+      <div class="schema-row"><span class="col-name">voice_profile</span><span class="col-type">text</span></div>
+      <div class="schema-row"><span class="col-name">portfolio_summary</span><span class="col-type">text</span></div>
+      <div class="schema-row"><span class="col-name">created_at</span><span class="col-type">timestamptz</span></div>
+    </div>
+
+    <div class="schema-table">
+      <div class="schema-header">📣 campaigns</div>
+      <div class="schema-row"><span class="col-name">id</span><span class="col-type">uuid</span><span class="col-pk">PK</span></div>
+      <div class="schema-row"><span class="col-name">user_id</span><span class="col-type">uuid</span><span class="col-fk">FK</span></div>
+      <div class="schema-row"><span class="col-name">name</span><span class="col-type">text</span></div>
+      <div class="schema-row"><span class="col-name">keywords</span><span class="col-type">text[]</span></div>
+      <div class="schema-row"><span class="col-name">subreddits</span><span class="col-type">text[]</span></div>
+      <div class="schema-row"><span class="col-name">platforms</span><span class="col-type">text[]</span></div>
+      <div class="schema-row"><span class="col-name">min_score</span><span class="col-type">int (default 7)</span></div>
+      <div class="schema-row"><span class="col-name">is_active</span><span class="col-type">boolean</span></div>
+      <div class="schema-row"><span class="col-name">created_at</span><span class="col-type">timestamptz</span></div>
+    </div>
+
+    <div class="schema-table">
+      <div class="schema-header">🎯 leads</div>
+      <div class="schema-row"><span class="col-name">id</span><span class="col-type">uuid</span><span class="col-pk">PK</span></div>
+      <div class="schema-row"><span class="col-name">campaign_id</span><span class="col-type">uuid</span><span class="col-fk">FK</span></div>
+      <div class="schema-row"><span class="col-name">platform</span><span class="col-type">text (reddit/x)</span></div>
+      <div class="schema-row"><span class="col-name">post_id</span><span class="col-type">text (external ID)</span></div>
+      <div class="schema-row"><span class="col-name">post_title</span><span class="col-type">text</span></div>
+      <div class="schema-row"><span class="col-name">post_body</span><span class="col-type">text</span></div>
+      <div class="schema-row"><span class="col-name">post_url</span><span class="col-type">text</span></div>
+      <div class="schema-row"><span class="col-name">author</span><span class="col-type">text</span></div>
+      <div class="schema-row"><span class="col-name">score</span><span class="col-type">float</span></div>
+      <div class="schema-row"><span class="col-name">score_reason</span><span class="col-type">text</span></div>
+      <div class="schema-row"><span class="col-name">status</span><span class="col-type">text (new/seen/replied)</span></div>
+      <div class="schema-row"><span class="col-name">found_at</span><span class="col-type">timestamptz</span></div>
+    </div>
+
+    <div class="schema-table">
+      <div class="schema-header">✉️ outreach_log</div>
+      <div class="schema-row"><span class="col-name">id</span><span class="col-type">uuid</span><span class="col-pk">PK</span></div>
+      <div class="schema-row"><span class="col-name">lead_id</span><span class="col-type">uuid</span><span class="col-fk">FK</span></div>
+      <div class="schema-row"><span class="col-name">user_id</span><span class="col-type">uuid</span><span class="col-fk">FK</span></div>
+      <div class="schema-row"><span class="col-name">generated_reply</span><span class="col-type">text</span></div>
+      <div class="schema-row"><span class="col-name">sent</span><span class="col-type">boolean</span></div>
+      <div class="schema-row"><span class="col-name">replied_back</span><span class="col-type">boolean</span></div>
+      <div class="schema-row"><span class="col-name">created_at</span><span class="col-type">timestamptz</span></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- PANEL 4: DATA FLOW CODE -->
+<div class="panel" id="panel-flow">
+  <div class="flow-steps">
+
+    <div class="flow-step">
+      <div class="step-num">1</div>
+      <div class="step-content">
+        <div class="step-title">Reddit scraper — fetch new posts</div>
+        <div class="step-detail">Runs every 6 hours via Inngest cron. Fetches top 100 newest posts from target subreddits using Snoowrap.</div>
+        <div class="step-code"><span class="kw">const</span> r = <span class="kw">new</span> <span class="fn">Snoowrap</span>({ userAgent, clientId, clientSecret, username, password })<br><span class="kw">const</span> posts = <span class="kw">await</span> r.<span class="fn">getSubreddit</span>(<span class="str">'forhire'</span>).<span class="fn">getNew</span>({ limit: <span class="str">100</span> })</div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num">2</div>
+      <div class="step-content">
+        <div class="step-title">Deduplication via Redis</div>
+        <div class="step-detail">Before scoring anything, check if we've seen this post ID before. Skip if yes, mark if no.</div>
+        <div class="step-code"><span class="kw">const</span> key = <span class="str">`seen:${post.id}`</span><br><span class="kw">const</span> exists = <span class="kw">await</span> redis.<span class="fn">get</span>(key)<br><span class="kw">if</span> (exists) <span class="kw">continue</span><br><span class="kw">await</span> redis.<span class="fn">set</span>(key, <span class="str">'1'</span>, { ex: <span class="str">2592000</span> }) <span class="comment">// 30 days TTL</span></div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num">3</div>
+      <div class="step-content">
+        <div class="step-title">Keyword pre-filter (cheap, no AI)</div>
+        <div class="step-detail">Simple string check before calling the LLM. Cuts ~80% of posts instantly at zero cost.</div>
+        <div class="step-code"><span class="kw">const</span> text = (post.title + post.body).<span class="fn">toLowerCase</span>()<br><span class="kw">const</span> hit = campaign.keywords.<span class="fn">some</span>(kw => text.<span class="fn">includes</span>(kw))<br><span class="kw">if</span> (!hit) <span class="kw">continue</span></div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num">4</div>
+      <div class="step-content">
+        <div class="step-title">AI scoring with Groq (llama-3.3-70b)</div>
+        <div class="step-detail">Only survivors from step 3 reach here. Score 1–10 for hiring intent. Response is JSON.</div>
+        <div class="step-code"><span class="kw">const</span> res = <span class="kw">await</span> groq.chat.completions.<span class="fn">create</span>({<br>&nbsp;&nbsp;model: <span class="str">'llama-3.3-70b-versatile'</span>,<br>&nbsp;&nbsp;messages: [{ role: <span class="str">'user'</span>, content: scoringPrompt }],<br>&nbsp;&nbsp;response_format: { type: <span class="str">'json_object'</span> }<br>})<br><span class="kw">const</span> { score, reason } = <span class="fn">JSON.parse</span>(res.choices[0].message.content)</div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num">5</div>
+      <div class="step-content">
+        <div class="step-title">Save to Supabase if score ≥ 7</div>
+        <div class="step-detail">Low-score posts are discarded. High-score leads are stored and appear in the dashboard instantly via Supabase Realtime.</div>
+        <div class="step-code"><span class="kw">if</span> (score >= <span class="str">7</span>) {<br>&nbsp;&nbsp;<span class="kw">await</span> supabase.<span class="fn">from</span>(<span class="str">'leads'</span>).<span class="fn">insert</span>({<br>&nbsp;&nbsp;&nbsp;&nbsp;campaign_id, platform: <span class="str">'reddit'</span>, post_id: post.id,<br>&nbsp;&nbsp;&nbsp;&nbsp;post_title: post.title, post_url: post.url,<br>&nbsp;&nbsp;&nbsp;&nbsp;score, score_reason: reason, status: <span class="str">'new'</span><br>&nbsp;&nbsp;})<br>}</div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num">6</div>
+      <div class="step-content">
+        <div class="step-title">Alert user if score ≥ 9</div>
+        <div class="step-detail">Top-tier leads trigger an immediate email via Resend. Later: Slack webhook.</div>
+        <div class="step-code"><span class="kw">if</span> (score >= <span class="str">9</span>) {<br>&nbsp;&nbsp;<span class="kw">await</span> resend.emails.<span class="fn">send</span>({<br>&nbsp;&nbsp;&nbsp;&nbsp;from: <span class="str">'leads@yourapp.com'</span>,<br>&nbsp;&nbsp;&nbsp;&nbsp;to: user.email,<br>&nbsp;&nbsp;&nbsp;&nbsp;subject: <span class="str">`🔥 ${score}/10 lead found: ${post.title.slice(0,50)}`</span>,<br>&nbsp;&nbsp;&nbsp;&nbsp;html: emailTemplate(post, score, reason)<br>&nbsp;&nbsp;})<br>}</div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num">7</div>
+      <div class="step-content">
+        <div class="step-title">User clicks "Generate Reply"</div>
+        <div class="step-detail">Calls /api/reply with the lead data + user's voice profile. Gemini Flash writes the DM in ~1 second.</div>
+        <div class="step-code"><span class="kw">const</span> reply = <span class="kw">await</span> gemini.<span class="fn">generateContent</span>(<br>&nbsp;&nbsp;<span class="fn">buildReplyPrompt</span>(post, user.voice_profile, user.portfolio_summary)<br>)<br><span class="kw">return</span> reply.response.<span class="fn">text</span>() <span class="comment">// ready to copy & send</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+function show(id) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('panel-' + id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
