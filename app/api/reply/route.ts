@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
 
     const { data: users } = await supabase
       .from('users')
-      .select('voice_profile, portfolio_summary')
+      .select('id, voice_profile, portfolio_summary')
       .limit(1)
 
     const profile = users?.[0]
