@@ -33,68 +33,114 @@ export default function CampaignForm() {
     }
   }
 
-  return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-      <h2 className="font-semibold text-white mb-4">New Campaign</h2>
+  const inputStyle: React.CSSProperties = {
+    width: '100%',
+    background: 'var(--bg-elevated)',
+    border: '1px solid var(--border)',
+    borderRadius: 8,
+    padding: '8px 12px',
+    fontSize: 13,
+    color: 'var(--text-primary)',
+    outline: 'none',
+    fontFamily: 'inherit',
+    transition: 'border-color 0.15s',
+  }
 
-      <div className="space-y-4">
+  return (
+    <div style={{
+      background: 'var(--bg-surface)',
+      border: '1px solid var(--border)',
+      borderRadius: 12,
+      padding: '20px 24px',
+    }}>
+      <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 16 }}>
+        New Campaign
+      </p>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {/* Name */}
         <div>
-          <label className="text-gray-400 text-sm block mb-1">Campaign Name</label>
+          <label style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block', marginBottom: 6 }}>
+            Campaign name
+          </label>
           <input
             value={name}
             onChange={e => setName(e.target.value)}
             placeholder="e.g. React Dev Leads"
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
+            style={inputStyle}
+            onFocus={e => { e.currentTarget.style.borderColor = 'var(--accent)' }}
+            onBlur={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
           />
         </div>
 
+        {/* Keywords */}
         <div>
-          <label className="text-gray-400 text-sm block mb-1">
-            Keywords <span className="text-gray-600">(comma separated)</span>
+          <label style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block', marginBottom: 6 }}>
+            Keywords <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>· comma separated</span>
           </label>
           <textarea
             value={keywordsRaw}
             onChange={e => setKeywordsRaw(e.target.value)}
             rows={3}
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500 resize-none"
+            style={{ ...inputStyle, resize: 'none', lineHeight: 1.6 }}
+            onFocus={e => { e.currentTarget.style.borderColor = 'var(--accent)' }}
+            onBlur={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
           />
         </div>
 
+        {/* Subreddits */}
         <div>
-          <label className="text-gray-400 text-sm block mb-1">
-            Subreddits <span className="text-gray-600">(comma separated, no r/)</span>
+          <label style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block', marginBottom: 6 }}>
+            Subreddits <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>· no r/</span>
           </label>
           <input
             value={subredditsRaw}
             onChange={e => setSubredditsRaw(e.target.value)}
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
+            style={inputStyle}
+            onFocus={e => { e.currentTarget.style.borderColor = 'var(--accent)' }}
+            onBlur={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
           />
         </div>
 
+        {/* Min score slider */}
         <div>
-          <label className="text-gray-400 text-sm block mb-1">
-            Minimum Score: <span className="text-purple-400 font-bold">{minScore}</span>
-          </label>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+            <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              Minimum score
+            </label>
+            <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--accent)' }}>{minScore}</span>
+          </div>
           <input
             type="range"
             min={5}
             max={10}
+            step={1}
             value={minScore}
             onChange={e => setMinScore(Number(e.target.value))}
-            className="w-full"
           />
-          <div className="flex justify-between text-xs text-gray-600 mt-1">
-            <span>5 — More leads</span>
-            <span>10 — Only best</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>5 · More leads</span>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>10 · Best only</span>
           </div>
         </div>
 
         <button
           onClick={handleSubmit}
           disabled={loading || !name.trim()}
-          className="w-full bg-purple-600 hover:bg-purple-700 disabled:opacity-50 py-2.5 rounded-lg text-sm font-medium transition"
+          style={{
+            background: (!loading && name.trim()) ? 'var(--accent)' : 'var(--bg-elevated)',
+            color: (!loading && name.trim()) ? '#fff' : 'var(--text-muted)',
+            border: (!loading && name.trim()) ? 'none' : '1px solid var(--border)',
+            borderRadius: 8,
+            padding: '9px',
+            fontSize: 13,
+            fontWeight: 500,
+            cursor: (!loading && name.trim()) ? 'pointer' : 'not-allowed',
+            transition: 'all 0.15s',
+            marginTop: 4,
+          }}
         >
-          {loading ? 'Creating...' : 'Create Campaign'}
+          {loading ? 'Creating…' : 'Create Campaign'}
         </button>
       </div>
     </div>

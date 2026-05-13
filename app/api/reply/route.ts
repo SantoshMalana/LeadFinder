@@ -59,10 +59,11 @@ Reply only, nothing else.`)
 
     return NextResponse.json({ reply })
 
-  } catch (err: any) {
-    console.error('REPLY ERROR:', err?.message)
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    console.error('REPLY ERROR:', message)
     return NextResponse.json({
-      error: err?.message || 'Unknown error'
+      error: message
     }, { status: 500 })
   }
 }

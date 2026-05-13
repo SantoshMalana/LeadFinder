@@ -1,22 +1,18 @@
 import type { Metadata } from 'next'
-import { Geist } from 'next/font/google'
+import { Inter } from 'next/font/google'
 import './globals.css'
 
-const geist = Geist({ subsets: ['latin'] })
+const inter = Inter({ subsets: ['latin'], weight: ['300', '400', '500', '600', '700'] })
 
 export const metadata: Metadata = {
-  title: 'LeadFinder — Find Freelance Leads on Autopilot',
-  description: 'AI-powered lead generation for freelancers and developers',
+  title: 'LeadFinder — Freelance Leads on Autopilot',
+  description: 'AI-powered Reddit lead generation for freelancers and developers. Find clients before your competition does.',
 }
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={geist.className}>{children}</body>
+      <body className={inter.className}>{children}</body>
     </html>
   )
 }

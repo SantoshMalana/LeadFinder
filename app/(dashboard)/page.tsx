@@ -1,6 +1,7 @@
 import { getLeads } from '@/actions/lead.actions'
 import { getCampaigns } from '@/actions/campaign.actions'
 import LeadCard from '@/components/LeadCard'
+import ScanButton from '@/components/ScanButton'
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
@@ -15,67 +16,117 @@ export default async function DashboardPage() {
     getCampaigns(),
   ])
 
-  return (
-    <div className="min-h-screen bg-gray-950 text-white">
-      {/* Header */}
-      <div className="border-b border-gray-800 px-6 py-4 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold">LeadFinder</h1>
-          <p className="text-gray-400 text-sm">{leads.length} leads found</p>
-        </div>
-        <div className="flex gap-3 items-center">
-          <Link
-            href="/analytics"
-            className="text-sm text-gray-400 hover:text-white px-4 py-2 transition"
-          >
-            Analytics
-          </Link>
-          <Link
-            href="/campaigns"
-            className="text-sm text-gray-400 hover:text-white px-4 py-2 border border-gray-700 rounded-lg transition"
-          >
-            Campaigns
-          </Link>
-          <form action="/api/scrape" method="POST">
-            <button
-              type="submit"
-              className="text-sm bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg transition"
-            >
-              Scan Now
-            </button>
-          </form>
-          <form action="/auth/signout" method="POST">
-            <button
-              type="submit"
-              className="text-sm text-gray-500 hover:text-gray-300 transition"
-            >
-              Sign out
-            </button>
-          </form>
-        </div>
-      </div>
+  const hotLeads = leads.filter(l => (l.score ?? 0) >= 9).length
+  const newLeads  = leads.filter(l => l.status === 'new').length
 
-      <div className="max-w-4xl mx-auto px-6 py-8">
+  return (
+    <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
+      {/* Header */}
+      <header style={{
+        borderBottom: '1px solid var(--border)',
+        padding: '0 24px',
+        height: 56,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        position: 'sticky',
+        top: 0,
+        background: 'var(--bg-base)',
+        zIndex: 40,
+        backdropFilter: 'blur(8px)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{
+              width: 28, height: 28, borderRadius: 8,
+              background: 'var(--accent)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 13, fontWeight: 700, color: '#fff',
+            }}>L</div>
+            <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--text-primary)' }}>LeadFinder</span>
+          </div>
+
+          <nav style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Link href="/" style={{
+              padding: '4px 12px', borderRadius: 6, fontSize: 13, fontWeight: 500,
+              color: 'var(--text-primary)', background: 'var(--bg-elevated)',
+              textDecoration: 'none',
+            }}>Leads</Link>
+            <Link href="/analytics" style={{
+              padding: '4px 12px', borderRadius: 6, fontSize: 13,
+              color: 'var(--text-secondary)', textDecoration: 'none',
+            }}>Analytics</Link>
+            <Link href="/campaigns" style={{
+              padding: '4px 12px', borderRadius: 6, fontSize: 13,
+              color: 'var(--text-secondary)', textDecoration: 'none',
+            }}>Campaigns</Link>
+          </nav>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <ScanButton />
+          <form action="/auth/signout" method="POST">
+            <button type="submit" style={{
+              background: 'transparent', border: 'none',
+              color: 'var(--text-muted)', fontSize: 13, cursor: 'pointer',
+              padding: '6px 10px',
+            }}>Sign out</button>
+          </form>
+        </div>
+      </header>
+
+      <div style={{ maxWidth: 820, margin: '0 auto', padding: '32px 24px' }}>
+
+        {/* Stats row */}
+        {leads.length > 0 && (
+          <div style={{ display: 'flex', gap: 12, marginBottom: 28 }}>
+            {[
+              { label: 'Total Leads', value: leads.length, color: 'var(--text-primary)' },
+              { label: 'New', value: newLeads, color: 'var(--accent)' },
+              { label: 'Hot (9+)', value: hotLeads, color: 'var(--green)' },
+            ].map(s => (
+              <div key={s.label} style={{
+                background: 'var(--bg-surface)',
+                border: '1px solid var(--border)',
+                borderRadius: 10,
+                padding: '14px 20px',
+                flex: 1,
+              }}>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{s.label}</p>
+                <p style={{ fontSize: 22, fontWeight: 700, color: s.color }}>{s.value}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Empty states */}
         {campaigns.length === 0 && (
-          <div className="text-center py-20">
-            <p className="text-gray-400 mb-4">No campaigns yet</p>
-            <Link
-              href="/campaigns"
-              className="bg-purple-600 hover:bg-purple-700 px-6 py-3 rounded-lg text-sm transition"
-            >
-              Create Your First Campaign →
-            </Link>
+          <div style={{
+            textAlign: 'center', padding: '80px 24px',
+            border: '1px dashed var(--border)', borderRadius: 16,
+          }}>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: 6, fontSize: 15, fontWeight: 500 }}>No campaigns yet</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 20 }}>Create a campaign to start finding leads automatically</p>
+            <Link href="/campaigns" style={{
+              background: 'var(--accent)', color: '#fff',
+              padding: '8px 20px', borderRadius: 8,
+              textDecoration: 'none', fontSize: 13, fontWeight: 500,
+            }}>Create Campaign →</Link>
           </div>
         )}
 
         {campaigns.length > 0 && leads.length === 0 && (
-          <div className="text-center py-20">
-            <p className="text-gray-400 mb-2">No leads yet</p>
-            <p className="text-gray-600 text-sm">Click "Scan Now" to find leads</p>
+          <div style={{
+            textAlign: 'center', padding: '80px 24px',
+            border: '1px dashed var(--border)', borderRadius: 16,
+          }}>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: 6, fontSize: 15, fontWeight: 500 }}>No leads yet</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Hit &ldquo;Scan Now&rdquo; to scrape Reddit for matching posts</p>
           </div>
         )}
 
-        <div className="space-y-4">
+        {/* Lead list */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {leads.map(lead => (
             <LeadCard key={lead.id} lead={lead} />
           ))}
