@@ -5,15 +5,19 @@ import dotenv from 'dotenv'
 
 dotenv.config({ path: path.join(process.cwd(), '.env.local') })
 
+import { Redis } from '@upstash/redis'
+
 const REDDIT_USER = process.env.REDDIT_USERNAME || ''
 const REDDIT_PASS = process.env.REDDIT_PASSWORD || ''
 const GROQ_API_KEY = process.env.GROQ_API_KEY || ''
 
-const logFile = path.join(process.cwd(), 'reddit_agent.log')
+const redis = Redis.fromEnv()
+
 function log(msg: string) {
   const line = `[${new Date().toLocaleTimeString()}] ${msg}`
   console.log(line)
-  fs.appendFileSync(logFile, line + '\n')
+  redis.lpush('agent_logs', line).catch(() => {})
+  redis.ltrim('agent_logs', 0, 100).catch(() => {})
 }
 
 if (!REDDIT_USER || !REDDIT_PASS) {

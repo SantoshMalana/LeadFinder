@@ -3,15 +3,20 @@ import { searchJobs, extractJobListings, getJobDetails } from './linkedin/search
 import { startEasyApply, handleMultiStep } from './linkedin/easyApply'
 import { shouldTakeBreak, getBreakDuration, addHumanBehavior, checkForRestriction } from './linkedin/antiDetect'
 import type { ParsedCV } from '../types'
-import * as fs from 'fs'
-import * as path from 'path'
+import { Redis } from '@upstash/redis'
 
-// Override console.log to write to agent.log for the Live Terminal
+// Override console.log to stream to Upstash Redis for the Live Terminal
 const originalLog = console.log
+const redis = Redis.fromEnv()
+
 console.log = (...args) => {
   const msg = args.join(' ')
-  const line = `[${new Date().toLocaleTimeString()}] ${msg}\n`
-  fs.appendFileSync(path.join(process.cwd(), 'agent.log'), line)
+  const line = `[${new Date().toLocaleTimeString()}] ${msg}`
+  
+  // Stream to Redis in background
+  redis.lpush('agent_logs', line).catch(() => {})
+  redis.ltrim('agent_logs', 0, 100).catch(() => {})
+  
   originalLog(...args)
 }
 

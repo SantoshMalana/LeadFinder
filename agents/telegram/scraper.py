@@ -44,20 +44,38 @@ if not API_ID or not API_HASH:
     print("❌ TELEGRAM_API_ID and TELEGRAM_API_HASH must be set in .env.local")
     sys.exit(1)
 
+UPSTASH_REDIS_REST_URL = os.getenv("UPSTASH_REDIS_REST_URL", "").strip()
+UPSTASH_REDIS_REST_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN", "").strip()
+
 # ─── Logging ──────────────────────────────────────────────────────────────────
 LOG_FILE = Path(__file__).resolve().parent.parent.parent / "telegram_agent.log"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger("tg_scraper")
 
+import threading
+import httpx
+
+def _push_log_to_redis(line: str):
+    if not UPSTASH_REDIS_REST_URL or not UPSTASH_REDIS_REST_TOKEN: return
+    try:
+        url = f"{UPSTASH_REDIS_REST_URL}/lpush/telegram_logs"
+        trim_url = f"{UPSTASH_REDIS_REST_URL}/ltrim/telegram_logs/0/100"
+        headers = {"Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}"}
+        
+        with httpx.Client() as client:
+            client.post(url, headers=headers, json=line, timeout=5.0)
+            client.get(trim_url, headers=headers, timeout=5.0)
+    except Exception:
+        pass
+
 def log(msg: str):
-    """Write to both console and log file for the Live Terminal."""
+    """Write to console and stream to Upstash Redis for the Live Terminal."""
     logger.info(msg)
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}\n")
+    line = f"[{datetime.now().strftime('%H:%M:%S')}] {msg}"
+    threading.Thread(target=_push_log_to_redis, args=(line,), daemon=True).start()
 
 # ─── Supabase helpers ─────────────────────────────────────────────────────────
-import httpx
 
 HEADERS = {
     "apikey": SUPABASE_KEY,
