@@ -1,13 +1,18 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { createClient as createAuthClient } from '@/lib/supabase/server'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const authClient = await createAuthClient()
-    const { data: { user } } = await authClient.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
-    const userId = user.id
+    const url = new URL(req.url)
+    let userId = url.searchParams.get('user_id')
+
+    if (!userId) {
+      const authClient = await createAuthClient()
+      const { data: { user } } = await authClient.auth.getUser()
+      if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+      userId = user.id
+    }
 
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,

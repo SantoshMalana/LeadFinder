@@ -1,0 +1,59 @@
+
+
+Santosh Malana
+LinkedIn:linkedin.com/in/santosh24xEmail:santosh24x@gmail.com
+GitHub:github.com/SantoshMalanaPhone: +91 8144986872
+TECHNICAL SKILLS
+◦Languages:Java, JavaScript, TypeScript, Python, C++, C, Go
+◦WebTechnologies:HTML,CSS,React.js,Next.js,TailwindCSS,Bootstrap,FramerMotion,WebRTC,WebSocket,Socket.IO
+◦Backend & Runtime:Node.js, Express.js, FastAPI, JWT, OAuth, Microservices, REST APIs
+◦Databases:MongoDB, MySQL, PostgreSQL, Redis
+◦Automation & Tools:Selenium, Playwright, Bash Scripting, VS Code, Postman, Docker, Git, Linux CLI
+EXPERIENCE
+Turing|S2 Annotator — CUA Trajectory Specialist(Remote, Contract|US-based)April 2026 – Present
+◦Producing and validating AI training data (SFT trajectories) for frontier model research via the OpenClaw agent framework.
+◦Driving an autonomous AI agent through realistic tasks guided by synthetic personas, annotating each step as Correct /
+Incorrect / Redundant.
+◦Executing developer-adjacent workflows: browser automation (Selenium, Playwright), API interactions, and Linux scripting
+tasks.
+PROJECTS
+Haleem — Luxury Perfume Brand UI|Live Demo(Freelance)March 2026
+◦Designed a high-fidelity luxury brand UI with immersive product showcases, animated transitions, and a fully responsive
+layout using Tailwind CSS and Framer Motion for polished micro-interactions.
+◦Technologies:React, Tailwind CSS, Framer Motion.
+SyncSpace — Real-Time Collaboration Platform|GitHub|Live DemoFebruary 2026
+◦Architected a scalable WebSocket infrastructure for 10,000+ concurrent users using Redis Pub/Sub for distributed event
+propagation and presence tracking across nodes.
+◦Deployed MongoDB Atlas Replica Set with compound indexing and cursor pagination for high availability, automatic failover,
+and optimized message retrieval at scale.
+◦Technologies:React 18, TypeScript, Node.js, Express.js, Socket.IO, WebRTC, MongoDB, Redis, Cloudinary, JWT, Google
+OAuth 2.0, Vercel, Render.
+Rideshare Hub — Carpooling Platform|
+GitHub|Live DemoFebruary 2026
+◦Built with Next.js 15 App Router and Server Actions, eliminating a separate REST API layer with direct server mutations,
+dynamic rendering, and cache invalidation.
+◦Structured an npm monorepo with shared TypeScript models enforcing type contracts, OTP-based auth via HTTP-only
+cookies, and Pusher for real-time notifications.
+◦Technologies:Next.js 15, TypeScript, MongoDB, Pusher, Leaflet, Framer Motion, Tailwind CSS, Nodemailer, Vercel.
+Loan Management System — Financial Platform|GitHub|Live DemoFebruary 2026
+◦Modeled a 5-state loan lifecycle (pending, sanctioned, disbursed, rejected, returned) with embedded approval chain logging
+for full decision traceability.
+◦Enforced role-based route guards and secured with 24-hour JWT sessions, time-bound OTP verification, and bcrypt-hashed
+staff credentials.
+◦Technologies:React, Node.js, Express.js, MongoDB, JWT, Bcrypt, Nodemailer, Vercel, Render.
+CERTIFICATIONS
+◦Micro1 Certified — Backend JSON Schema Developer|CertificateMarch 2026
+◦Oracle Data Platform 2025 Certified Foundations Associate|CertificateJanuary 2026
+◦Cloud Computing, NPTEL IIT Kharagpur|CertificateOctober 2025
+◦CodeSmart: Foundations and Data Structures|CertificateJuly 2025
+◦Code-A-Hunt Hackathon — Coding Blocks LPU|CertificateFebruary 2024
+ACHIEVEMENTS
+◦NPTEL Elite Performer: Achieved Elite certification with a 71% score in Cloud Computing from IIT Kharagpur.
+◦Finalist,Code-A-HuntHackathon: Competedagainstinter-universityengineeringteamsandadvancedtothefinalistround.
+EDUCATION
+◦Lovely Professional UniversityPhagwara, Punjab
+B.Tech - Computer Science and Engineering|CGPA: 6.6August 2023 – Present
+◦Narayana Junior CollegeBobbili, Andhra Pradesh
+Intermediate (PCM)|Percentage: 81%April 2022 – March 2023
+◦Bhashyam High SchoolSalur, Andhra Pradesh
+Matriculation|Percentage: 100%April 2020 – March 2021

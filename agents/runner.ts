@@ -3,6 +3,17 @@ import { searchJobs, extractJobListings, getJobDetails } from './linkedin/search
 import { startEasyApply, handleMultiStep } from './linkedin/easyApply'
 import { shouldTakeBreak, getBreakDuration, addHumanBehavior, checkForRestriction } from './linkedin/antiDetect'
 import type { ParsedCV } from '../types'
+import * as fs from 'fs'
+import * as path from 'path'
+
+// Override console.log to write to agent.log for the Live Terminal
+const originalLog = console.log
+console.log = (...args) => {
+  const msg = args.join(' ')
+  const line = `[${new Date().toLocaleTimeString()}] ${msg}\n`
+  fs.appendFileSync(path.join(process.cwd(), 'agent.log'), line)
+  originalLog(...args)
+}
 
 const API_BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
 
@@ -39,11 +50,11 @@ export async function startAutoApply(config: AgentConfig) {
     await humanDelay(3000, 5000)
 
     // Check if logged in
-    const isLoggedIn = await page.$('.global-nav__me, .feed-identity-module, button.share-box-feed-entry__trigger, .scaffold-layout')
+    let isLoggedIn = page.url().includes('/feed') || page.url().includes('/jobs') || await page.$('.global-nav__me') !== null
     if (!isLoggedIn) {
       console.log('⚠️  Not logged into LinkedIn. Please log in manually.')
       console.log('   The browser window is open — log in and the agent will continue.')
-      await page.waitForSelector('.global-nav__me, .feed-identity-module, button.share-box-feed-entry__trigger, .scaffold-layout', { timeout: 300_000 }) // 5 min
+      await page.waitForURL('**/feed/**', { timeout: 300_000 }) // Wait until the URL changes to feed
       console.log('✅ LinkedIn login detected!')
     }
 
@@ -90,7 +101,7 @@ export async function startAutoApply(config: AgentConfig) {
           const matchData = await matchRes.json()
 
           if (matchData.score < config.threshold) {
-            console.log(`⏭️  Skip: "${listing.title}" at ${listing.company} (score: ${matchData.score})`)
+            console.log(`⏭️  Skip: "${listing.title}" at ${listing.company} (score: ${matchData.score} is below threshold ${config.threshold})`)
             continue
           }
 
@@ -226,7 +237,7 @@ if (require.main === module) {
       startAutoApply({
         user_id: userId,
         max_daily: data.today_limit || 25,
-        threshold: data.threshold || 7,
+        threshold: 7, // FORCED TO 7 FOR TESTING
         roles: ['Full Stack Developer', 'React Developer', 'Frontend Developer'],
         locations: ['Remote', ''],
       })
