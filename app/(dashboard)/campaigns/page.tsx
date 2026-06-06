@@ -50,6 +50,14 @@ export default async function CampaignsPage() {
               color: 'var(--text-primary)', background: 'var(--bg-elevated)',
               textDecoration: 'none',
             }}>Campaigns</Link>
+            <Link href="/applications" style={{
+              padding: '4px 12px', borderRadius: 6, fontSize: 13,
+              color: 'var(--text-secondary)', textDecoration: 'none',
+            }}>🤖 AutoApply</Link>
+            <Link href="/profile" style={{
+              padding: '4px 12px', borderRadius: 6, fontSize: 13,
+              color: 'var(--text-secondary)', textDecoration: 'none',
+            }}>Profile</Link>
           </nav>
         </div>
       </header>
