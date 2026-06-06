@@ -400,14 +400,31 @@ class TelegramScraper:
             log(f"   ✅ Saved to dashboard! (ID: {saved.get('id', '?')[:8]}...)")
             
             # TRIGGER AUTO APPLY
+            import subprocess
             if apply_email:
-                log(f"   ✉️ Found email: {apply_email} - Auto-sending CV via Resend!")
-                # TODO: Trigger email API
-            elif apply_link:
-                log(f"   🔗 Found application link: {apply_link} - Triggering Universal ATS Filler!")
-                # TODO: Spawn Playwright filler
-        else:
-            log(f"   ⚠️  Failed to save to database")
+                log(f"   ✉️ Found email: {apply_email} - Auto-sending cold email!")
+                try:
+                    subprocess.Popen(
+                        ["npx", "tsx", "agents/email/mailer.ts", self.user_id, apply_email, text[:1000]],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True
+                    )
+                    log(f"   🚀 Gmail Agent dispatched in background.")
+                except Exception as e:
+                    log(f"   ⚠️ Failed to spawn Mailer: {e}")
+            elif apply_link and ("forms.gle" in apply_link or "google.com/forms" in apply_link):
+                log(f"   🔗 Found Google Form link: {apply_link} - Triggering Auto-Applier!")
+                try:
+                    subprocess.Popen(
+                        ["npx", "tsx", "agents/forms/googleForms.ts", self.user_id, apply_link],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True
+                    )
+                    log(f"   🚀 Google Forms Agent dispatched in background.")
+                except Exception as e:
+                    log(f"   ⚠️ Failed to spawn Forms Agent: {e}")
 
     async def stop(self):
         self.running = False
