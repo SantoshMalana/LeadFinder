@@ -1,3 +1,8 @@
+import * as dotenv from 'dotenv'
+import * as path from 'path'
+
+dotenv.config({ path: path.join(process.cwd(), '.env.local') })
+
 import { launchBrowser, getPage, closeBrowser, humanDelay, takeScreenshot } from './linkedin/browser'
 import { searchJobs, extractJobListings, getJobDetails } from './linkedin/search'
 import { startEasyApply, handleMultiStep } from './linkedin/easyApply'
