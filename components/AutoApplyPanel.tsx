@@ -12,6 +12,7 @@ export default function AutoApplyPanel({ userId, hasProfile, isRunning: initialR
 }) {
   const [running, setRunning] = useState(initialRunning)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
   const router = useRouter()
 
   async function toggleAutoApply() {
@@ -27,7 +28,9 @@ export default function AutoApplyPanel({ userId, hasProfile, isRunning: initialR
         setRunning(!running)
         router.refresh()
       }
-    } catch {}
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Action failed')
+    }
     setLoading(false)
   }
 
@@ -102,6 +105,12 @@ export default function AutoApplyPanel({ userId, hasProfile, isRunning: initialR
           {loading ? '...' : running ? '⏹ Stop Agent' : '🚀 Start Agent'}
         </button>
       </div>
+
+      {error && (
+        <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 10, position: 'relative', zIndex: 1 }}>
+          ❌ {error}
+        </p>
+      )}
 
       <style>{`
         @keyframes pulse-dot {

@@ -2,10 +2,10 @@ import type { ParsedCV } from '@/types'
 
 export default function ProfileDisplay({ profile }: { profile: ParsedCV }) {
   const allSkills = [
-    ...profile.skills.languages.map(s => ({ name: s, cat: 'lang' })),
-    ...profile.skills.frameworks.map(s => ({ name: s, cat: 'fw' })),
-    ...profile.skills.tools.map(s => ({ name: s, cat: 'tool' })),
-    ...profile.skills.databases.map(s => ({ name: s, cat: 'db' })),
+    ...(profile.skills?.languages || []).map(s => ({ name: s, cat: 'lang' })),
+    ...(profile.skills?.frameworks || []).map(s => ({ name: s, cat: 'fw' })),
+    ...(profile.skills?.tools || []).map(s => ({ name: s, cat: 'tool' })),
+    ...(profile.skills?.databases || []).map(s => ({ name: s, cat: 'db' })),
   ]
 
   const catColors: Record<string, { bg: string; color: string }> = {
@@ -57,7 +57,7 @@ export default function ProfileDisplay({ profile }: { profile: ParsedCV }) {
               {skill.name}
             </span>
           ))}
-          {profile.skills.soft_skills.map(s => (
+          {(profile.skills?.soft_skills || []).map(s => (
             <span key={s} style={{
               padding: '4px 10px', borderRadius: 6, fontSize: 12,
               background: 'var(--bg-elevated)', color: 'var(--text-secondary)',
@@ -70,7 +70,7 @@ export default function ProfileDisplay({ profile }: { profile: ParsedCV }) {
       </div>
 
       {/* Experience */}
-      {profile.experience.length > 0 && (
+      {(profile.experience?.length || 0) > 0 && (
         <div style={{ marginBottom: 24 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
             Experience
@@ -86,7 +86,7 @@ export default function ProfileDisplay({ profile }: { profile: ParsedCV }) {
               <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
                 {exp.company} • {exp.duration}
               </div>
-              {exp.highlights.length > 0 && (
+              {(exp.highlights?.length || 0) > 0 && (
                 <ul style={{ margin: '6px 0 0 16px', padding: 0 }}>
                   {exp.highlights.slice(0, 3).map((h, j) => (
                     <li key={j} style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 2 }}>{h}</li>
@@ -99,7 +99,7 @@ export default function ProfileDisplay({ profile }: { profile: ParsedCV }) {
       )}
 
       {/* Education */}
-      {profile.education.length > 0 && (
+      {(profile.education?.length || 0) > 0 && (
         <div style={{ marginBottom: 24 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
             Education
@@ -118,7 +118,7 @@ export default function ProfileDisplay({ profile }: { profile: ParsedCV }) {
       )}
 
       {/* Projects */}
-      {profile.projects.length > 0 && (
+      {(profile.projects?.length || 0) > 0 && (
         <div>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
             Projects ({profile.projects.length})

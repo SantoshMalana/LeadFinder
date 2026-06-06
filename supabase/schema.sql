@@ -6,7 +6,7 @@
 -- Student profiles (parsed from CV)
 CREATE TABLE IF NOT EXISTS profiles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE UNIQUE,
   raw_cv_url TEXT,
   raw_cv_text TEXT,
   parsed_data JSONB,
@@ -20,7 +20,7 @@ CREATE INDEX IF NOT EXISTS idx_profiles_user_id ON profiles(user_id);
 -- Job listings discovered by the agent
 CREATE TABLE IF NOT EXISTS jobs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   source TEXT NOT NULL DEFAULT 'linkedin',
   source_id TEXT,
   company TEXT NOT NULL,
@@ -72,7 +72,7 @@ CREATE INDEX IF NOT EXISTS idx_gencontent_job_id ON generated_content(job_id);
 -- Rejection learning data (Layer 3)
 CREATE TABLE IF NOT EXISTS rejection_patterns (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   pattern_type TEXT NOT NULL, -- 'cv_version' | 'cover_letter_tone' | 'job_type' | 'platform' | 'company_size'
   pattern_value TEXT NOT NULL,
   success_count INT DEFAULT 0,
@@ -87,7 +87,7 @@ CREATE INDEX IF NOT EXISTS idx_rejection_user ON rejection_patterns(user_id);
 -- A/B test tracking (Layer 3)
 CREATE TABLE IF NOT EXISTS ab_tests (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   test_name TEXT NOT NULL,
   variant_a TEXT NOT NULL,
   variant_b TEXT NOT NULL,

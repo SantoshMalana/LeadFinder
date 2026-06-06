@@ -122,7 +122,7 @@ export default function ApplicationCard({ job }: { job: Job }) {
               fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6,
               maxHeight: 120, overflow: 'hidden', marginBottom: 12,
             }}>
-              {job.description.slice(0, 400)}...
+              {job.description.length > 400 ? `${job.description.slice(0, 400)}...` : job.description}
             </div>
           )}
 

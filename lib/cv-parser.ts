@@ -6,9 +6,8 @@ import type { ParsedCV } from '@/types'
  * Uses pdf-parse v1 which works as a simple function call.
  */
 export async function extractTextFromPDF(buffer: Buffer): Promise<string> {
-  // Import from lib directly to avoid pdf-parse's test file loading bug
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const pdfParse = require('pdf-parse/lib/pdf-parse.js')
+  const pdfParse = require('pdf-parse')
   const result = await pdfParse(buffer)
   return result.text
 }

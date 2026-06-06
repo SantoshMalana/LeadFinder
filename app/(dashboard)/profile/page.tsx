@@ -68,7 +68,7 @@ export default async function ProfilePage() {
                 background: 'var(--accent-subtle)', color: 'var(--accent)',
                 borderRadius: 6, fontWeight: 500,
               }}>
-                {profile.parsed_data.skills.languages.length + profile.parsed_data.skills.frameworks.length + profile.parsed_data.skills.tools.length} skills detected
+                {(profile.parsed_data.skills?.languages?.length || 0) + (profile.parsed_data.skills?.frameworks?.length || 0) + (profile.parsed_data.skills?.tools?.length || 0)} skills detected
               </span>
             </div>
             <ProfileDisplay profile={profile.parsed_data} />
