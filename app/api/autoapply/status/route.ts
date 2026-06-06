@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('autoapply_running, job_preferences')
+      .select('autoapply_running, job_preferences, parsed_data')
       .eq('user_id', userId)
       .single()
 
@@ -55,6 +55,7 @@ export async function GET(req: NextRequest) {
       threshold: profile?.job_preferences?.auto_apply_threshold || 7,
       recent_jobs: recentJobs || [],
       queued_jobs: queuedJobs || [],
+      parsed_data: profile?.parsed_data || null,
     })
   } catch (err: unknown) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

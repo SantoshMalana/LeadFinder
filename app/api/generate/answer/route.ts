@@ -4,6 +4,11 @@ import { generateScreeningAnswer } from '@/lib/cover-letter'
 
 export async function POST(req: NextRequest) {
   try {
+    const apiKey = req.headers.get('x-api-key')
+    if (apiKey !== process.env.INTERNAL_API_KEY) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { job_id, question, user_id } = await req.json()
 
     const supabase = createClient(

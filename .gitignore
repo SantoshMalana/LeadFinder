@@ -44,3 +44,8 @@ next-env.d.ts
 agents/telegram/telegram_session.session
 agent.log
 telegram_agent.log
+
+.leadfinder/
+reddit_agent.log
+telegram_session.session
+telegram_session.session-journal

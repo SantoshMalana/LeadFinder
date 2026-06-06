@@ -30,21 +30,21 @@ export async function fillEasyApplyForm(page: Page, profile: ParsedCV): Promise<
   const phoneInput = await page.$('input[name*="phone"], input[id*="phone"], input[aria-label*="phone" i]')
   if (phoneInput) {
     const val = await phoneInput.inputValue()
-    if (!val) await humanType(page, 'input[name*="phone"], input[id*="phone"]', profile.phone)
+    if (!val && profile.phone) await humanType(page, 'input[name*="phone"], input[id*="phone"]', profile.phone)
   }
 
   // Fill email if empty
   const emailInput = await page.$('input[name*="email"], input[type="email"]')
   if (emailInput) {
     const val = await emailInput.inputValue()
-    if (!val) await humanType(page, 'input[name*="email"], input[type="email"]', profile.email)
+    if (!val && profile.email) await humanType(page, 'input[name*="email"], input[type="email"]', profile.email)
   }
 
   // Fill location/city
   const cityInput = await page.$('input[name*="city"], input[aria-label*="city" i], input[aria-label*="location" i]')
   if (cityInput) {
     const val = await cityInput.inputValue()
-    if (!val) await humanType(page, 'input[name*="city"]', profile.location)
+    if (!val && profile.location) await humanType(page, 'input[name*="city"], input[aria-label*="city" i]', profile.location)
   }
 
   // Handle text areas (cover letter, additional info)
@@ -54,7 +54,7 @@ export async function fillEasyApplyForm(page: Page, profile: ParsedCV): Promise<
     if (label.toLowerCase().includes('cover') || label.toLowerCase().includes('additional')) {
       const val = await ta.inputValue()
       if (!val) {
-        await ta.fill(`I'm excited about this opportunity. With ${profile.years_of_experience}+ years of experience in ${profile.skills.frameworks.slice(0, 3).join(', ')}, I believe I can make a strong contribution to your team.`)
+        await ta.fill(`I am highly interested in this opportunity. With ${profile.years_of_experience || 3}+ years of experience in ${profile.skills?.frameworks?.slice(0, 3).join(', ') || 'software development'}, I believe I can make a strong contribution to your team.`)
       }
     }
   }
@@ -66,9 +66,9 @@ export async function fillEasyApplyForm(page: Page, profile: ParsedCV): Promise<
     const labelLower = label.toLowerCase()
 
     if (labelLower.includes('experience') || labelLower.includes('years')) {
-      const years = String(profile.years_of_experience)
+      const years = String(profile.years_of_experience || 2)
       await sel.selectOption({ label: years })
-        .catch(() => sel.selectOption({ index: Math.min(profile.years_of_experience, 5) })
+        .catch(() => sel.selectOption({ index: Math.min(profile.years_of_experience || 2, 5) })
         .catch(() => {}))
     }
   }
@@ -81,47 +81,68 @@ export async function fillEasyApplyForm(page: Page, profile: ParsedCV): Promise<
  */
 export async function handleScreeningQuestion(
   page: Page,
-  jobId: string
+  jobId: string,
+  userId?: string
 ): Promise<void> {
   const questions = await page.$$('.jobs-easy-apply-form-section__grouping, .fb-dash-form-element')
 
   for (const q of questions) {
-    const labelEl = await q.$('label, .fb-dash-form-element__label, span[aria-hidden]')
+    const labelEl = await q.$('label, .fb-dash-form-element__label, span[aria-hidden="true"]')
     const inputEl = await q.$('input:not([type="hidden"]), textarea, select')
-    if (!labelEl || !inputEl) continue
+    
+    // Some radio buttons are grouped differently
+    const radioInputs = await q.$$('input[type="radio"]')
 
-    const questionText = await labelEl.innerText().catch(() => '')
-    if (!questionText.trim()) continue
+    if (!labelEl && radioInputs.length === 0) continue
 
+    const questionText = labelEl ? await labelEl.innerText().catch(() => '') : ''
+    if (!questionText.trim() && radioInputs.length === 0) continue
+
+    // Handle standalone radio groups (e.g. Yes/No questions)
+    if (radioInputs.length > 0) {
+      // Check if any is already checked
+      let isChecked = false
+      for (const radio of radioInputs) {
+        if (await radio.isChecked()) isChecked = true
+      }
+      if (isChecked) continue
+
+      // Try to click "Yes" or default to first
+      const yesOption = await q.$('label:has-text("Yes"), input[value="Yes"]')
+      if (yesOption) {
+        await yesOption.click().catch(() => {})
+      } else {
+        await radioInputs[0].click().catch(() => {})
+      }
+      continue
+    }
+
+    if (!inputEl) continue
     const tagName = await inputEl.evaluate(el => el.tagName.toLowerCase())
-    const inputType = await inputEl.getAttribute('type') || ''
 
-    // Skip already filled
+    // Skip already filled text inputs
     if (tagName === 'input' || tagName === 'textarea') {
       const val = await inputEl.inputValue().catch(() => '')
       if (val) continue
-    }
 
-    // For radio buttons / yes-no — try to select "Yes" first
-    if (inputType === 'radio') {
-      const yesOption = await q.$('label:has-text("Yes"), input[value="Yes"]')
-      if (yesOption) { await yesOption.click(); continue }
-    }
-
-    // For text inputs — call AI to generate answer
-    if (tagName === 'input' || tagName === 'textarea') {
+      // For text inputs — call AI to generate answer
       try {
         const res = await fetch(`${API_BASE}/api/generate/answer`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ job_id: jobId, question: questionText }),
+          body: JSON.stringify({ job_id: jobId, question: questionText, user_id: userId }),
         })
         const data = await res.json()
         if (data.answer) {
           await inputEl.fill(data.answer)
+        } else {
+          // Fallback if AI fails: e.g. "How many years of experience..." -> "2"
+          if (questionText.toLowerCase().includes('year')) await inputEl.fill('3')
+          else await inputEl.fill('Yes')
         }
       } catch (err) {
         console.error(`⚠️ Failed to answer: "${questionText}"`, err)
+        await inputEl.fill('Yes') // Ultimate fallback
       }
     }
 
@@ -153,7 +174,8 @@ export async function uploadResume(page: Page, resumePath: string): Promise<bool
 export async function handleMultiStep(
   page: Page,
   profile: ParsedCV,
-  jobId: string
+  jobId: string,
+  userId?: string
 ): Promise<'submitted' | 'captcha' | 'error'> {
   const MAX_STEPS = 8
 
@@ -170,7 +192,7 @@ export async function handleMultiStep(
 
     // Fill any visible form fields
     await fillEasyApplyForm(page, profile)
-    await handleScreeningQuestion(page, jobId)
+    await handleScreeningQuestion(page, jobId, userId)
 
     // Check for Submit button
     const submitBtn = await page.$('button:has-text("Submit application"), button:has-text("Submit"), button[aria-label*="Submit"]')

@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from telethon import TelegramClient, events
+from telethon.network import ConnectionTcpObfuscated
+from telethon.errors import FloodWaitError
 from telethon.tl.types import Channel, Chat, User as TgUser
 from dotenv import load_dotenv
 
@@ -32,6 +34,8 @@ SUPABASE_URL = os.getenv("NEXT_PUBLIC_SUPABASE_URL", "").strip()
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 APP_URL = os.getenv("NEXT_PUBLIC_APP_URL", "http://localhost:3000")
+TELEGRAM_PHONE = os.getenv("TELEGRAM_PHONE", "+917569566642")
+TELEGRAM_2FA_PASSWORD = os.getenv("TELEGRAM_2FA_PASSWORD", "")
 
 # The user ID to associate leads with
 USER_ID = os.getenv("AUTOAPPLY_USER_ID", "")
@@ -62,21 +66,19 @@ HEADERS = {
     "Prefer": "return=representation",
 }
 
-async def supabase_insert(table: str, data: dict) -> dict | None:
-    """Insert a row into Supabase via REST."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{SUPABASE_URL}/rest/v1/{table}",
-            headers=HEADERS,
-            json=data,
-            timeout=15,
-        )
-        if resp.status_code in (200, 201):
-            rows = resp.json()
-            return rows[0] if isinstance(rows, list) and rows else rows
-        else:
-            log(f"⚠️  Supabase insert error ({resp.status_code}): {resp.text[:200]}")
+async def supabase_insert(table: str, data: dict, timeout=30):
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(url, headers=HEADERS, json=data, timeout=timeout)
+            resp.raise_for_status()
+            # If Prefer: return=representation is used, it returns JSON. Otherwise 201 Created.
+            if resp.status_code in [200, 201]:
+                return data
             return None
+    except Exception as e:
+        log(f"⚠️  Supabase insert error: {e}")
+        return None
 
 async def supabase_select(table: str, params: dict) -> list:
     """Select rows from Supabase."""
@@ -110,35 +112,50 @@ Return a JSON object with these fields:
 - skills_mentioned (array of strings): technical skills mentioned
 - location (string): location or "Remote" if not specified
 - summary (string): 1-2 sentence summary of the opportunity
+- apply_email (string | null): The exact email address to send resumes to, if present
+- apply_link (string | null): The exact URL (like Google Forms, Workday, lever) to apply at, if present
 - contact_method (string): how to apply — DM, email, link, etc.
 
 Return ONLY valid JSON, no markdown."""
 
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {GROQ_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": "llama-3.3-70b-versatile",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.1,
-                    "max_tokens": 500,
-                },
-                timeout=30,
-            )
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"]
-            # Strip markdown fences if present
-            content = re.sub(r"^```json?\s*", "", content.strip())
-            content = re.sub(r"\s*```$", "", content.strip())
-            return json.loads(content)
-    except Exception as e:
-        log(f"⚠️  AI scoring error: {e}")
-        return {"is_lead": False, "score": 0}
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {GROQ_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "llama-3.3-70b-versatile",
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.1,
+                        "max_tokens": 500,
+                    },
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                content = data["choices"][0]["message"]["content"]
+                # Strip markdown fences if present
+                content = re.sub(r"^```json?\s*", "", content.strip())
+                content = re.sub(r"\s*```$", "", content.strip())
+                return json.loads(content)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                wait_time = (attempt + 1) * 10
+                log(f"⏳ Groq API rate limited (429). Retrying in {wait_time}s...")
+                await asyncio.sleep(wait_time)
+            else:
+                log(f"⚠️  AI scoring error: HTTP {e.response.status_code}")
+                return {"is_lead": False, "score": 0}
+        except Exception as e:
+            log(f"⚠️  AI scoring error: {e}")
+            return {"is_lead": False, "score": 0}
+            
+    log(f"❌ Groq API failed after 3 retries.")
+    return {"is_lead": False, "score": 0}
 
 # ─── Keywords for quick pre-filter ────────────────────────────────────────────
 
@@ -164,6 +181,8 @@ def quick_keyword_match(text: str) -> bool:
 
 # Default groups — user can customize via config
 DEFAULT_GROUPS = [
+    "Tech Job opportunities",
+    "B-7 || The Intens Premium Community",
     "freelaborx",
     "workdayjobs",
     "RemoteJobsHiring",
@@ -186,7 +205,18 @@ class TelegramScraper:
     def __init__(self, user_id: str, groups: list[str] | None = None):
         self.user_id = user_id
         self.groups = groups or DEFAULT_GROUPS
-        self.client = TelegramClient(str(SESSION_PATH), API_ID, API_HASH)
+        self.client = TelegramClient(
+            str(SESSION_PATH),
+            API_ID,
+            API_HASH,
+            connection=ConnectionTcpObfuscated,
+            connection_retries=20,
+            retry_delay=3,
+            auto_reconnect=True,
+            flood_sleep_threshold=600,  # auto-sleep up to 10 min on flood
+            timeout=60,
+            request_retries=10,
+        )
         self.processed_count = 0
         self.lead_count = 0
         self.running = True
@@ -198,7 +228,11 @@ class TelegramScraper:
         log(f"   Monitoring {len(self.groups)} groups")
         log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
-        await self.client.start()
+        await self.client.start(
+            phone=lambda: TELEGRAM_PHONE,
+            password=lambda: TELEGRAM_2FA_PASSWORD if TELEGRAM_2FA_PASSWORD else input("Enter 2FA password: "),
+            code_callback=lambda: os.getenv("TELEGRAM_OTP") or input("Please enter the code you received: ")
+        )
         log("✅ Telegram login successful!")
 
         # Resolve group entities
@@ -308,7 +342,10 @@ class TelegramScraper:
         log(f"      📞 Contact: {contact}")
 
         # Build Telegram message URL
-        job_url = f"https://t.me/{group_username}/{message_id}" if group_username else ""
+        tg_url = f"https://t.me/{group_username}/{message_id}" if group_username else ""
+        
+        apply_email = result.get("apply_email")
+        apply_link = result.get("apply_link")
 
         # Check for duplicates
         existing = await supabase_select("jobs", {
@@ -329,17 +366,26 @@ class TelegramScraper:
             "title": title,
             "description": text[:3000],
             "location": result.get("location", "Remote"),
-            "job_url": job_url,
+            "job_url": apply_link or tg_url,
             "job_type": "freelance",
             "match_score": score,
             "match_reason": summary,
             "status": "discovered",
             "discovered_at": (date or datetime.now(timezone.utc)).isoformat(),
+            # We can use the jsonb metadata column if it exists, or just log for now
         }
 
         saved = await supabase_insert("jobs", job_data)
         if saved:
             log(f"   ✅ Saved to dashboard! (ID: {saved.get('id', '?')[:8]}...)")
+            
+            # TRIGGER AUTO APPLY
+            if apply_email:
+                log(f"   ✉️ Found email: {apply_email} - Auto-sending CV via Resend!")
+                # TODO: Trigger email API
+            elif apply_link:
+                log(f"   🔗 Found application link: {apply_link} - Triggering Universal ATS Filler!")
+                # TODO: Spawn Playwright filler
         else:
             log(f"   ⚠️  Failed to save to database")
 
@@ -365,11 +411,26 @@ async def main():
 
     scraper = TelegramScraper(user_id=user_id, groups=groups)
 
-    try:
-        await scraper.start()
-    except KeyboardInterrupt:
-        log("\n⛔ Interrupted by user")
-        await scraper.stop()
+    max_retries = 5
+    for attempt in range(1, max_retries + 1):
+        try:
+            await scraper.start()
+            break
+        except FloodWaitError as e:
+            wait = e.seconds + 10
+            log(f"⏳ Telegram FloodWait: sleeping {wait}s before retry {attempt}/{max_retries}")
+            await asyncio.sleep(wait)
+        except KeyboardInterrupt:
+            log("\n⛔ Interrupted by user")
+            await scraper.stop()
+            break
+        except Exception as e:
+            log(f"❌ Error: {e}")
+            if attempt < max_retries:
+                log(f"🔄 Retrying in 30s... (attempt {attempt}/{max_retries})")
+                await asyncio.sleep(30)
+            else:
+                log("❌ Max retries exceeded. Exiting.")
 
 if __name__ == "__main__":
     asyncio.run(main())

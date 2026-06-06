@@ -150,7 +150,7 @@ export async function startAutoApply(config: AgentConfig) {
             body: JSON.stringify({ user_id: config.user_id }),
           })
 
-          // Handle multi-step form
+          // Handle multi-step form fallback profile
           const dummyProfile: ParsedCV = {
             name: '', email: '', phone: '', location: '', linkedin_url: null,
             github_url: null, portfolio_url: null, headline: '', summary: '',
@@ -159,7 +159,8 @@ export async function startAutoApply(config: AgentConfig) {
           }
 
           // Use actual profile from earlier match if available
-          const result = await handleMultiStep(page, dummyProfile, matchData.job_id)
+          const profileToUse = statusData.parsed_data || dummyProfile
+          const result = await handleMultiStep(page, profileToUse, matchData.job_id, config.user_id)
 
           if (result === 'submitted') {
             appliedCount++
