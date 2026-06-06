@@ -241,18 +241,32 @@ class TelegramScraper:
         )
         log("✅ Telegram login successful!")
 
+        log("   📥 Fetching your active Telegram chats...")
+        dialogs = await self.client.get_dialogs()
+
         # Resolve group entities
         joined_groups = []
         for group_name in self.groups:
-            try:
-                entity = await self.client.get_entity(group_name)
-                joined_groups.append(entity)
-                log(f"   ✅ Joined: {getattr(entity, 'title', group_name)}")
-            except Exception as e:
-                log(f"   ⚠️  Could not join '{group_name}': {e}")
+            found = False
+            # First try to match exactly with chats you are already in
+            for d in dialogs:
+                if d.title == group_name:
+                    joined_groups.append(d.entity)
+                    log(f"   ✅ Joined: {d.title}")
+                    found = True
+                    break
+            
+            # If not found by title, try to resolve it globally (public username / invite link)
+            if not found:
+                try:
+                    entity = await self.client.get_entity(group_name)
+                    joined_groups.append(entity)
+                    log(f"   ✅ Joined: {getattr(entity, 'title', group_name)}")
+                except Exception as e:
+                    log(f"   ⚠️  Could not join '{group_name}': {e}")
 
         if not joined_groups:
-            log("❌ No groups found! Add valid group usernames.")
+            log("❌ No groups found! Ensure you spelled the group titles exactly right.")
             return
 
         log(f"\n🔍 Monitoring {len(joined_groups)} groups for job leads...\n")
