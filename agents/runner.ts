@@ -39,11 +39,11 @@ export async function startAutoApply(config: AgentConfig) {
     await humanDelay(3000, 5000)
 
     // Check if logged in
-    const isLoggedIn = await page.$('.global-nav__me, .feed-identity-module')
+    const isLoggedIn = await page.$('.global-nav__me, .feed-identity-module, button.share-box-feed-entry__trigger, .scaffold-layout')
     if (!isLoggedIn) {
       console.log('⚠️  Not logged into LinkedIn. Please log in manually.')
       console.log('   The browser window is open — log in and the agent will continue.')
-      await page.waitForSelector('.global-nav__me, .feed-identity-module', { timeout: 300_000 }) // 5 min
+      await page.waitForSelector('.global-nav__me, .feed-identity-module, button.share-box-feed-entry__trigger, .scaffold-layout', { timeout: 300_000 }) // 5 min
       console.log('✅ LinkedIn login detected!')
     }
 
