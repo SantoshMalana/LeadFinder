@@ -201,18 +201,6 @@ def quick_keyword_match(text: str) -> bool:
 DEFAULT_GROUPS = [
     "Tech Job opportunities",
     "B-7 || The Intens Premium Community",
-    "freelaborx",
-    "workdayjobs",
-    "RemoteJobsHiring",
-    "remote_jobs_hiring",
-    "freelancerdevs",
-    "WebDeveloperJobs",
-    "reactjsdevelopers",
-    "nodejsdevelopers",
-    "PythonDevelopers_jobs",
-    "hiring_developers",
-    "remote_developer_jobs",
-    "faborx",
 ]
 
 # ─── Main Bot ─────────────────────────────────────────────────────────────────

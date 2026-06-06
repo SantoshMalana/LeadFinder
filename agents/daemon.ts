@@ -79,44 +79,32 @@ async function initDaemon() {
     }
   }
 
-  // 2. Subscribe to real-time changes
-  supabase
-    .channel('agent-controller')
-    .on(
-      'postgres_changes',
-      {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'profiles',
-        filter: 'autoapply_running=eq.true', // When someone clicks Start
-      },
-      (payload) => {
-        const userId = payload.new.user_id
-        console.log(`[Daemon] Received START signal for user ${userId}`)
-        startAgentsForUser(userId)
+  // 2. Poll for changes every 3 seconds to guarantee delivery 
+  // (Bypasses needing to manually enable Realtime in the Supabase UI)
+  setInterval(async () => {
+    try {
+      const { data: currentProfiles } = await supabase
+        .from('profiles')
+        .select('user_id, autoapply_running')
+
+      if (!currentProfiles) return
+
+      for (const p of currentProfiles) {
+        const isRunningInDb = p.autoapply_running
+        const isRunningLocally = !!activeAgents[p.user_id]
+
+        if (isRunningInDb && !isRunningLocally) {
+          console.log(`[Daemon] Detected START signal for user ${p.user_id}`)
+          startAgentsForUser(p.user_id)
+        } else if (!isRunningInDb && isRunningLocally) {
+          console.log(`[Daemon] Detected STOP signal for user ${p.user_id}`)
+          stopAgentsForUser(p.user_id)
+        }
       }
-    )
-    .on(
-      'postgres_changes',
-      {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'profiles',
-        filter: 'autoapply_running=eq.false', // When someone clicks Stop
-      },
-      (payload) => {
-        const userId = payload.new.user_id
-        console.log(`[Daemon] Received STOP signal for user ${userId}`)
-        stopAgentsForUser(userId)
-      }
-    )
-    .subscribe((status, err) => {
-      if (status === 'SUBSCRIBED') {
-        console.log('[Daemon] Connected to Supabase Realtime ✅')
-      } else if (err) {
-        console.error('[Daemon] Realtime error:', err)
-      }
-    })
+    } catch (err) {
+      console.error('[Daemon] Polling error:', err)
+    }
+  }, 3000)
 }
 
 initDaemon()
