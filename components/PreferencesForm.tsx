@@ -21,14 +21,25 @@ export default function PreferencesForm({ userId, existing }: {
   userId: string
   existing?: JobPreferences
 }) {
-  const [prefs, setPrefs] = useState<JobPreferences>(existing || DEFAULT_PREFS)
+  const init = existing || DEFAULT_PREFS
+  const [prefs, setPrefs] = useState<JobPreferences>(init)
+  const [rolesText, setRolesText] = useState(init.roles.join(', '))
+  const [locationsText, setLocationsText] = useState(init.locations.join(', '))
+  const [industriesText, setIndustriesText] = useState(init.industries.join(', '))
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
   async function handleSave() {
     setSaving(true)
     try {
-      await updateJobPreferences(prefs)
+      const finalPrefs = {
+        ...prefs,
+        roles: rolesText.split(',').map(s => s.trim()).filter(Boolean),
+        locations: locationsText.split(',').map(s => s.trim()).filter(Boolean),
+        industries: industriesText.split(',').map(s => s.trim()).filter(Boolean),
+      }
+      await updateJobPreferences(finalPrefs)
+      setPrefs(finalPrefs)
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
     } catch (err) {
@@ -56,8 +67,8 @@ export default function PreferencesForm({ userId, existing }: {
           <label style={labelStyle}>Target Roles (comma-separated)</label>
           <input
             style={inputStyle}
-            value={prefs.roles.join(', ')}
-            onChange={(e) => setPrefs({ ...prefs, roles: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+            value={rolesText}
+            onChange={(e) => setRolesText(e.target.value)}
             placeholder="Full Stack Developer, React Developer"
           />
         </div>
@@ -67,8 +78,8 @@ export default function PreferencesForm({ userId, existing }: {
           <label style={labelStyle}>Preferred Locations</label>
           <input
             style={inputStyle}
-            value={prefs.locations.join(', ')}
-            onChange={(e) => setPrefs({ ...prefs, locations: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+            value={locationsText}
+            onChange={(e) => setLocationsText(e.target.value)}
             placeholder="Remote, Bangalore, Mumbai"
           />
         </div>
@@ -93,8 +104,8 @@ export default function PreferencesForm({ userId, existing }: {
           <label style={labelStyle}>Target Industries</label>
           <input
             style={inputStyle}
-            value={prefs.industries.join(', ')}
-            onChange={(e) => setPrefs({ ...prefs, industries: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+            value={industriesText}
+            onChange={(e) => setIndustriesText(e.target.value)}
             placeholder="SaaS, Fintech, AI/ML"
           />
         </div>

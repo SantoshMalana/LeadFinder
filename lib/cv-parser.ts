@@ -2,11 +2,13 @@ import { groq } from './groq'
 import type { ParsedCV } from '@/types'
 
 /**
- * Extract text from a PDF buffer
+ * Extract text from a PDF buffer.
+ * Uses pdf-parse v1 which works as a simple function call.
  */
 export async function extractTextFromPDF(buffer: Buffer): Promise<string> {
+  // Import from lib directly to avoid pdf-parse's test file loading bug
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const pdfParse = require('pdf-parse') as (buffer: Buffer) => Promise<{ text: string }>
+  const pdfParse = require('pdf-parse/lib/pdf-parse.js')
   const result = await pdfParse(buffer)
   return result.text
 }
