@@ -2,8 +2,13 @@
 
 import { useState, useEffect, useRef } from 'react'
 
-export default function LiveTerminal({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) {
+export default function LiveTerminal({ isOpen, onClose, defaultSource = 'agent' }: { 
+  isOpen: boolean
+  onClose: () => void
+  defaultSource?: 'agent' | 'telegram'
+}) {
   const [logs, setLogs] = useState<string>('Connecting to agent...')
+  const [source, setSource] = useState<'agent' | 'telegram'>(defaultSource)
   const terminalEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -11,20 +16,18 @@ export default function LiveTerminal({ isOpen, onClose }: { isOpen: boolean, onC
 
     const fetchLogs = async () => {
       try {
-        const res = await fetch('/api/logs')
+        const res = await fetch(`/api/logs?source=${source}`)
         const data = await res.json()
         setLogs(data.logs)
-      } catch (err) {}
+      } catch {}
     }
 
-    fetchLogs() // initial fetch
-    const interval = setInterval(fetchLogs, 2000) // poll every 2s
-
+    fetchLogs()
+    const interval = setInterval(fetchLogs, 2000)
     return () => clearInterval(interval)
-  }, [isOpen])
+  }, [isOpen, source])
 
   useEffect(() => {
-    // Auto-scroll to bottom
     if (terminalEndRef.current) {
       terminalEndRef.current.scrollIntoView({ behavior: 'smooth' })
     }
@@ -46,6 +49,43 @@ export default function LiveTerminal({ isOpen, onClose }: { isOpen: boolean, onC
             </div>
             <span className="text-sm font-mono text-gray-400 ml-2">Live Agent Progress</span>
           </div>
+
+          {/* Source Tabs */}
+          <div className="flex items-center gap-1 bg-[#0a0a0a] rounded-lg p-0.5">
+            <button
+              onClick={() => setSource('agent')}
+              style={{
+                padding: '4px 12px',
+                borderRadius: 6,
+                border: 'none',
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+                background: source === 'agent' ? '#7c5cfc' : 'transparent',
+                color: source === 'agent' ? '#fff' : '#888',
+                transition: 'all 0.2s',
+              }}
+            >
+              🔗 LinkedIn
+            </button>
+            <button
+              onClick={() => setSource('telegram')}
+              style={{
+                padding: '4px 12px',
+                borderRadius: 6,
+                border: 'none',
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+                background: source === 'telegram' ? '#0088cc' : 'transparent',
+                color: source === 'telegram' ? '#fff' : '#888',
+                transition: 'all 0.2s',
+              }}
+            >
+              📱 Telegram
+            </button>
+          </div>
+
           <button 
             onClick={onClose}
             className="text-gray-400 hover:text-white transition-colors"
