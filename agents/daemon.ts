@@ -1,14 +1,18 @@
 import { createClient } from '@supabase/supabase-js'
 import { spawn, ChildProcess } from 'child_process'
+import treeKill from 'tree-kill'
+import * as cron from 'node-cron'
 import * as dotenv from 'dotenv'
 import * as path from 'path'
 
 dotenv.config({ path: path.join(process.cwd(), '.env.local') })
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
+if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.error('[Daemon] Missing Supabase credentials in .env.local')
+  process.exit(1)
+}
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
+const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
 // Map to keep track of running processes per user
 const activeAgents: Record<string, ChildProcess[]> = {}
@@ -23,16 +27,32 @@ function startAgentsForUser(userId: string) {
   
   const processes: ChildProcess[] = []
 
-  // 1. LinkedIn Runner
-  const linkedIn = spawn('npx', ['tsx', 'agents/runner.ts', userId], { stdio: 'inherit', shell: true })
+  const spawnAgent = (name: string, cmd: string, args: string[]) => {
+    const p = spawn(cmd, args, { stdio: 'inherit', shell: true })
+    p.on('error', (err) => console.error(`[Daemon] ${name} error:`, err))
+    p.on('exit', (code) => {
+      console.log(`[Daemon] ${name} exited with code ${code}`)
+      if (code !== 0 && code !== null && activeAgents[userId] && activeAgents[userId].includes(p)) {
+        console.log(`[Daemon] Restarting crashed ${name} in 10s...`)
+        setTimeout(() => {
+          if (activeAgents[userId]) {
+            const newP = spawnAgent(name, cmd, args)
+            activeAgents[userId].push(newP)
+          }
+        }, 10000)
+      }
+    })
+    return p
+  }
+
+  const linkedIn = spawnAgent('LinkedIn', 'npx', ['tsx', 'agents/runner.ts', userId])
   processes.push(linkedIn)
 
-  // 2. Reddit Bot
-  const reddit = spawn('npx', ['tsx', 'agents/reddit/bot.ts', userId], { stdio: 'inherit', shell: true })
+  const reddit = spawnAgent('Reddit', 'npx', ['tsx', 'agents/reddit/bot.ts', userId])
   processes.push(reddit)
 
-  // 3. Telegram Scraper
-  const telegram = spawn('python', ['agents/telegram/scraper.py', userId], { stdio: 'inherit', shell: true })
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3'
+  const telegram = spawnAgent('Telegram', pythonCmd, ['agents/telegram/scraper.py', userId])
   processes.push(telegram)
 
   activeAgents[userId] = processes
@@ -49,10 +69,10 @@ function stopAgentsForUser(userId: string) {
   console.log(`[Daemon] Stopping agents for user ${userId}...`)
   
   for (const p of processes) {
-    if (!p.killed) {
-      // On Windows, killing the parent shell doesn't always kill children easily, 
-      // but for standard graceful exit `p.kill()` works nicely.
-      p.kill('SIGINT')
+    if (!p.killed && p.pid) {
+      treeKill(p.pid, 'SIGTERM', (err) => {
+        if (err) console.error(`[Daemon] Failed to kill PID ${p.pid}:`, err)
+      })
     }
   }
 
@@ -61,33 +81,50 @@ function stopAgentsForUser(userId: string) {
 }
 
 async function initDaemon() {
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-  console.log('🤖 Supabase Realtime Daemon Started')
-  console.log('Listening for Start/Stop signals from Vercel...')
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+  console.log('🚀 Daemon starting...')
 
-  // 1. On startup, check who is supposed to be running
-  const { data: profiles } = await supabase
-    .from('profiles')
-    .select('user_id, autoapply_running')
-    .eq('autoapply_running', true)
+  // Wait for DB to be ready
+  let currentProfiles: any[] = []
+  while (true) {
+    try {
+      const { data, error } = await supabase.from('profiles').select('user_id, autoapply_running')
+      if (error) throw error
+      currentProfiles = data || []
+      break
+    } catch (err) {
+      console.error('[Daemon] Failed to fetch profiles. Retrying in 5s...', err)
+      await new Promise(r => setTimeout(r, 5000))
+    }
+  }
 
-  if (profiles && profiles.length > 0) {
-    console.log(`[Daemon] Found ${profiles.length} users with active agents on startup.`)
-    for (const p of profiles) {
+  // 1. Initial Start
+  for (const p of currentProfiles) {
+    if (p.autoapply_running) {
       startAgentsForUser(p.user_id)
     }
   }
 
   // 2. Poll for changes every 3 seconds to guarantee delivery 
-  // (Bypasses needing to manually enable Realtime in the Supabase UI)
+  let isPolling = false
   setInterval(async () => {
+    if (isPolling) return
+    isPolling = true
     try {
       const { data: currentProfiles } = await supabase
         .from('profiles')
         .select('user_id, autoapply_running')
 
       if (!currentProfiles) return
+
+      const currentProfileIds = new Set(currentProfiles.map(p => p.user_id))
+
+      // Check if any running agents belong to deleted users
+      for (const userId of Object.keys(activeAgents)) {
+        if (!currentProfileIds.has(userId)) {
+          console.log(`[Daemon] User ${userId} not found in DB. Stopping zombie agents...`)
+          stopAgentsForUser(userId)
+        }
+      }
 
       for (const p of currentProfiles) {
         const isRunningInDb = p.autoapply_running
@@ -103,11 +140,50 @@ async function initDaemon() {
       }
     } catch (err) {
       console.error('[Daemon] Polling error:', err)
+    } finally {
+      isPolling = false
     }
   }, 3000)
+
+  // 3. Schedule Background Cron Jobs
+  console.log('[Daemon] Scheduling background cron tasks...')
+
+  let isImapRunning = false
+  // Check Gmail for recruiter replies every 15 minutes
+  cron.schedule('*/15 * * * *', () => {
+    if (isImapRunning) return
+    isImapRunning = true
+    console.log('[Cron] Running Inbox Tracker...')
+    const pythonCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx'
+    const proc = spawn(pythonCmd, ['tsx', 'agents/email/imapTracker.ts'], { stdio: 'inherit', shell: true })
+    
+    proc.on('error', (err) => console.error('[Cron] Failed to spawn IMAP tracker:', err))
+    proc.on('exit', () => { isImapRunning = false })
+  })
+
+  let isNotifierRunning = false
+  // Send Daily Telegram Summary at 9:00 PM
+  cron.schedule('0 21 * * *', () => {
+    if (isNotifierRunning) return
+    isNotifierRunning = true
+    console.log('[Cron] Sending Daily Summary...')
+    const pythonCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx'
+    const proc = spawn(pythonCmd, ['tsx', 'agents/telegram/notifier.ts'], { stdio: 'inherit', shell: true })
+    
+    proc.on('error', (err) => console.error('[Cron] Failed to spawn notifier:', err))
+    proc.on('exit', () => { isNotifierRunning = false })
+  })
 }
 
-initDaemon()
+// Global Exception handlers
+process.on('uncaughtException', (err) => {
+  console.error('[Daemon] UNCAUGHT EXCEPTION:', err)
+})
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Daemon] UNHANDLED REJECTION at:', promise, 'reason:', reason)
+})
+
+initDaemon().catch(err => console.error('[Daemon] Init error:', err))
 
 // Handle graceful exit
 process.on('SIGINT', () => {

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { updateJobPreferences } from '@/actions/profile.actions'
 import type { JobPreferences } from '@/types'
 
@@ -28,9 +28,21 @@ export default function PreferencesForm({ userId, existing }: {
   const [industriesText, setIndustriesText] = useState(init.industries.join(', '))
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  useEffect(() => {
+    if (existing) {
+      setPrefs(existing)
+      setRolesText(existing.roles.join(', '))
+      setLocationsText(existing.locations.join(', '))
+      setIndustriesText(existing.industries.join(', '))
+    }
+  }, [existing])
 
   async function handleSave() {
     setSaving(true)
+    setErrorMsg(null)
     try {
       const finalPrefs = {
         ...prefs,
@@ -41,9 +53,11 @@ export default function PreferencesForm({ userId, existing }: {
       await updateJobPreferences(finalPrefs)
       setPrefs(finalPrefs)
       setSaved(true)
+      // Cleanup timeout correctly to avoid overlapping
       setTimeout(() => setSaved(false), 3000)
-    } catch (err) {
+    } catch (err: unknown) {
       console.error(err)
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to save preferences')
     }
     setSaving(false)
   }
@@ -187,6 +201,7 @@ export default function PreferencesForm({ userId, existing }: {
       >
         {saving ? 'Saving...' : saved ? '✓ Saved!' : 'Save Preferences'}
       </button>
+      {errorMsg && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 8 }}>{errorMsg}</p>}
     </div>
   )
 }

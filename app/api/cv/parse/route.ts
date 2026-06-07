@@ -5,21 +5,10 @@ import { structureCV } from '@/lib/cv-parser'
 
 export async function POST(req: NextRequest) {
   try {
-    // Get user ID from auth or body
-    let userId: string | null = null
-    try {
-      const body = await req.json()
-      userId = body.user_id || null
-    } catch {
-      // no body is fine
-    }
-
-    if (!userId) {
-      const authClient = await createAuthClient()
-      const { data: { user } } = await authClient.auth.getUser()
-      if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
-      userId = user.id
-    }
+    const authClient = await createAuthClient()
+    const { data: { user } } = await authClient.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+    const userId = user.id
 
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -38,10 +27,15 @@ export async function POST(req: NextRequest) {
 
     const parsedData = await structureCV(profile.raw_cv_text)
 
-    await supabase
+    const { error: updateError } = await supabase
       .from('profiles')
-      .update({ parsed_data: parsedData, updated_at: new Date().toISOString() })
+      .update({ 
+        parsed_data: parsedData,
+        updated_at: new Date().toISOString()
+      })
       .eq('user_id', userId)
+
+    if (updateError) throw updateError
 
     return NextResponse.json({ success: true, parsed: parsedData })
   } catch (err: unknown) {

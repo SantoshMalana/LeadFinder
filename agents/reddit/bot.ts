@@ -5,23 +5,34 @@ import dotenv from 'dotenv'
 
 dotenv.config({ path: path.join(process.cwd(), '.env.local') })
 
+import { createClient } from '@supabase/supabase-js'
 import { Redis } from '@upstash/redis'
 
 const REDDIT_USER = process.env.REDDIT_USERNAME || ''
 const REDDIT_PASS = process.env.REDDIT_PASSWORD || ''
 const GROQ_API_KEY = process.env.GROQ_API_KEY || ''
+const USER_ID = process.argv[2] || process.env.AUTOAPPLY_USER_ID || ''
 
-const redis = Redis.fromEnv()
+let redis: Redis
+try {
+  redis = Redis.fromEnv()
+} catch (e) {
+  console.log('Redis config missing')
+}
+
+const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
 
 function log(msg: string) {
   const line = `[${new Date().toLocaleTimeString()}] ${msg}`
   console.log(line)
-  redis.lpush('agent_logs', line).catch(() => {})
-  redis.ltrim('agent_logs', 0, 100).catch(() => {})
+  if (redis) {
+    redis.lpush('agent_logs', line).catch(() => {})
+    redis.ltrim('agent_logs', 0, 100).catch(() => {})
+  }
 }
 
-if (!REDDIT_USER || !REDDIT_PASS) {
-  log('❌ Reddit credentials missing.')
+if (!REDDIT_USER || !REDDIT_PASS || !USER_ID) {
+  log('❌ Reddit credentials or USER_ID missing.')
   process.exit(1)
 }
 
@@ -56,8 +67,10 @@ Return JSON only:
         max_tokens: 300,
       })
     })
+    if (!res.ok) return { is_lead: false, score: 0 }
     const data = await res.json()
-    let content = data.choices[0].message.content
+    let content = data.choices?.[0]?.message?.content
+    if (!content) return { is_lead: false, score: 0 }
     content = content.replace(/^```json/, '').replace(/```$/, '').trim()
     return JSON.parse(content)
   } catch (err) {
@@ -113,13 +126,23 @@ async function startRedditAgent() {
 
           for (const post of posts.slice(0, 5)) { // Check top 5 new posts
             if (seenPosts.has(post.id)) continue
+            
+            // Check Supabase to see if we already processed this
+            const { data: existingJob } = await supabase.from('jobs').select('id').eq('user_id', USER_ID).eq('job_url', post.url).maybeSingle()
+            if (existingJob) {
+               seenPosts.add(post.id)
+               continue
+            }
             seenPosts.add(post.id)
 
             await page.goto(post.url, { waitUntil: 'domcontentloaded', timeout: 30000 })
             await page.waitForTimeout(2000)
             
             const title = await page.title()
-            const textContent = await page.evaluate(() => document.body.innerText)
+            const textContent = await page.evaluate(() => {
+              const post = document.querySelector('[data-test-id="post-content"], .Post, article, [slot="text-body"]')
+              return post?.textContent || ''
+            })
             
             const isMatch = KEYWORDS.some(kw => title.toLowerCase().includes(kw) || textContent.toLowerCase().includes(kw))
             if (!isMatch) continue
@@ -134,14 +157,28 @@ async function startRedditAgent() {
               // Try to comment
               try {
                 log(`   ✍️ Writing reply...`)
-                const commentBox = await page.$('shreddit-composer')
+                const commentBox = await page.$('shreddit-composer div[contenteditable="true"], div[contenteditable="true"][role="textbox"]')
                 if (commentBox) {
-                  await commentBox.evaluate((el: any) => el.focus())
-                  await page.keyboard.type(analysis.reply_draft)
-                  await page.waitForTimeout(1000)
-                  await page.keyboard.press('Tab')
-                  await page.keyboard.press('Enter')
+                  await commentBox.click()
+                  await page.keyboard.type(analysis.reply_draft, { delay: 50 })
+                  const submitBtn = await page.$('button[type="submit"]:has-text("Comment"), shreddit-composer button[slot="submit-button"]')
+                  if (submitBtn) await submitBtn.click()
                   log(`   ✅ Automatically replied to thread!`)
+                  
+                  await supabase.from('jobs').insert({
+                    user_id: USER_ID,
+                    source: 'reddit',
+                    source_id: `reddit_${post.id}`,
+                    company: 'Reddit Lead',
+                    title: analysis.summary?.substring(0, 100) || 'Reddit Opportunity',
+                    description: textContent.substring(0, 3000),
+                    job_url: post.url,
+                    match_score: analysis.score,
+                    match_reason: analysis.summary,
+                    status: 'applied',
+                    applied_at: new Date().toISOString(),
+                    discovered_at: new Date().toISOString(),
+                  })
                 } else {
                   log(`   ⚠️ Comment box not found (Thread locked?)`)
                 }
@@ -168,4 +205,9 @@ async function startRedditAgent() {
   }
 }
 
-startRedditAgent()
+startRedditAgent().catch(e => console.error(e))
+
+process.on('SIGINT', () => {
+  log('Shutting down Reddit Agent...')
+  process.exit(0)
+})

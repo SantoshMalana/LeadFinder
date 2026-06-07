@@ -20,6 +20,8 @@ function log(msg: string) {
   redis.ltrim('agent_logs', 0, 100).catch(() => {})
 }
 
+import { ParsedCV } from '../../types'
+
 async function randomDelay(min: number, max: number) {
   const ms = Math.floor(Math.random() * (max - min + 1) + min)
   await new Promise(res => setTimeout(res, ms))
@@ -32,7 +34,7 @@ async function humanType(page: Page, selector: string, text: string) {
   }
 }
 
-async function getAnswersFromGroq(cv: any, questions: string[]): Promise<Record<string, string>> {
+async function getAnswersFromGroq(cv: ParsedCV, questions: string[]): Promise<Record<string, string>> {
   const prompt = `
 You are filling out a Google Form job application for a candidate.
 Answer the following questions based exactly on their CV. 
@@ -51,23 +53,30 @@ ${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
 Return ONLY a valid JSON object where the keys are the EXACT question strings, and the values are your answers.
 `
 
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${GROQ_API_KEY}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.1,
-    })
-  })
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.1,
+        })
+      })
 
-  const data = await res.json()
-  let content = data.choices[0].message.content
-  content = content.replace(/^```json/, '').replace(/```$/, '').trim()
-  return JSON.parse(content)
+      if (!res.ok) continue
+      const data = await res.json()
+      let content = data.choices?.[0]?.message?.content
+      if (!content) continue
+      content = content.replace(/^```json/, '').replace(/```$/, '').trim()
+      return JSON.parse(content)
+    } catch {}
+  }
+  return {}
 }
 
 export async function fillGoogleForm(userId: string, formUrl: string) {
@@ -113,7 +122,7 @@ export async function fillGoogleForm(userId: string, formUrl: string) {
           textInput.setAttribute('id', id)
           
           let titleText = titleEl.textContent || ''
-          titleText = titleText.replace(/\\*$/, '').trim() // Remove required asterisks
+          titleText = titleText.replace(/\*$/, '').trim() // Remove required asterisks
           
           return { id, title: titleText }
         }
@@ -144,11 +153,10 @@ export async function fillGoogleForm(userId: string, formUrl: string) {
     log(`🚀 All questions answered! Preparing to submit...`)
     await randomDelay(2000, 4000)
     
-    // Find the submit button. In Google Forms it's usually a div with role="button" containing "Submit" or "Next"
     const submitBtn = await page.$('div[role="button"]:has-text("Submit")')
     if (submitBtn) {
-      // await submitBtn.click() // Un-comment this in production!
-      log(`🎯 SUCCESS! Form filled and submitted. (Submit button clicked in simulation)`)
+      await submitBtn.click() 
+      log(`🎯 SUCCESS! Form filled and submitted.`)
     } else {
       log(`⚠️ Submit button not found. You might need to manually click submit.`)
     }
@@ -156,8 +164,8 @@ export async function fillGoogleForm(userId: string, formUrl: string) {
     // Wait a bit to let the user see it before closing
     await randomDelay(5000, 7000)
 
-  } catch (error: any) {
-    log(`🚨 Error filling Google Form: ${error.message}`)
+  } catch (error) {
+    log(`🚨 Error filling Google Form: ${(error as any).message}`)
   } finally {
     log(`🧹 Closing browser...`)
     await browser.close()
@@ -165,7 +173,8 @@ export async function fillGoogleForm(userId: string, formUrl: string) {
 }
 
 // If run directly for testing:
-if (require.main === module) {
+const isMain = typeof require !== 'undefined' && require.main === module;
+if (isMain) {
   const userId = process.argv[2]
   const targetUrl = process.argv[3]
   if (userId && targetUrl) {

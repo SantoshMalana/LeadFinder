@@ -24,8 +24,8 @@ export async function upsertProfile(profileData: Partial<StudentProfile>) {
   if (!user) throw new Error('Not authenticated')
 
   const { error } = await supabase.from('profiles').upsert({
-    user_id: user.id,
     ...profileData,
+    user_id: user.id,
     updated_at: new Date().toISOString(),
   }, { onConflict: 'user_id' })
 

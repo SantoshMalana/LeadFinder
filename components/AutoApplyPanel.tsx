@@ -123,7 +123,7 @@ export default function AutoApplyPanel({ userId, hasProfile, isRunning: initialR
         </div>
       </div>
 
-      <LiveTerminal isOpen={isTerminalOpen} onClose={() => setIsTerminalOpen(false)} />
+      <LiveTerminal isOpen={isTerminalOpen} onClose={() => setIsTerminalOpen(false)} type="agent" userId={userId} />
 
       <style>{`
         @keyframes pulse-dot {

@@ -1,6 +1,20 @@
-import { chromium, type Browser, type Page, type BrowserContext } from 'playwright'
+import { chromium } from 'playwright-extra'
+import { type Browser, type Page, type BrowserContext } from 'playwright'
+import StealthPlugin from 'puppeteer-extra-plugin-stealth'
+import RecaptchaPlugin from 'puppeteer-extra-plugin-recaptcha'
 import * as path from 'path'
 import * as os from 'os'
+import { generateFingerprint, getFingerprintScript } from './fingerprint'
+import { ProxyManager } from './proxyManager'
+
+chromium.use(StealthPlugin())
+// Configure Recaptcha Plugin using an optional key
+if (process.env.CAPTCHA_API_KEY) {
+  chromium.use(RecaptchaPlugin({
+    provider: { id: '2captcha', token: process.env.CAPTCHA_API_KEY },
+    visualFeedback: true,
+  }))
+}
 
 let browser: Browser | null = null
 let context: BrowserContext | null = null
@@ -10,26 +24,46 @@ const USER_DATA_DIR = path.join(os.homedir(), '.leadfinder', 'chrome-profile')
 /**
  * Launch real Chrome with persistent profile (keeps LinkedIn session)
  */
-export async function launchBrowser(): Promise<BrowserContext> {
+export async function launchBrowser(proxyUrl?: string): Promise<BrowserContext> {
   if (context) return context
+
+  const fingerprint = generateFingerprint()
 
   context = await chromium.launchPersistentContext(USER_DATA_DIR, {
     headless: false,
     channel: 'chrome', // Use real Chrome, not Chromium
-    viewport: { width: 1366, height: 768 },
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    viewport: fingerprint.viewport,
+    userAgent: fingerprint.userAgent,
+    locale: fingerprint.locale,
+    timezoneId: fingerprint.timezone,
+    geolocation: fingerprint.geolocation,
+    permissions: ['geolocation'],
+    extraHTTPHeaders: {
+      'Accept-Language': fingerprint.acceptLanguage,
+      'sec-ch-ua': fingerprint.secChUa,
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': fingerprint.platform,
+    },
     args: [
       '--disable-blink-features=AutomationControlled',
       '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-features=IsolateOrigins,site-per-process',
+      `--window-size=${fingerprint.viewport.width},${fingerprint.viewport.height}`,
+      ...(proxyUrl ? [`--proxy-server=${proxyUrl}`] : []),
     ],
+    ignoreDefaultArgs: ['--enable-automation'],
   })
 
-  console.log('🌐 Browser launched with persistent profile')
+  // Inject fingerprint overrides
+  await context.addInitScript(getFingerprintScript(fingerprint))
+
+  console.log('🌐 Browser launched with persistent profile and Ghost Protocol stealth')
   return context
 }
 
-export async function getPage(): Promise<Page> {
-  const ctx = await launchBrowser()
+export async function getPage(proxyUrl?: string): Promise<Page> {
+  const ctx = await launchBrowser(proxyUrl)
   const pages = ctx.pages()
   return pages.length > 0 ? pages[0] : await ctx.newPage()
 }

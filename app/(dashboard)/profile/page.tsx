@@ -4,6 +4,7 @@ import { getProfile } from '@/actions/profile.actions'
 import CVUpload from '@/components/CVUpload'
 import ProfileDisplay from '@/components/ProfileDisplay'
 import PreferencesForm from '@/components/PreferencesForm'
+import StealthSettingsForm from '@/components/StealthSettingsForm'
 
 export default async function ProfilePage() {
   const supabase = await createClient()
@@ -87,6 +88,10 @@ export default async function ProfilePage() {
             </h2>
           </div>
           <PreferencesForm
+            userId={user.id}
+            existing={profile?.job_preferences || undefined}
+          />
+          <StealthSettingsForm
             userId={user.id}
             existing={profile?.job_preferences || undefined}
           />

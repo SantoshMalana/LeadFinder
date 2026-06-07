@@ -119,6 +119,12 @@ export interface JobPreferences {
   company_sizes: ('startup' | 'mid' | 'enterprise' | 'any')[]
   max_applications_per_day: number
   auto_apply_threshold: number
+  stealth?: {
+    proxies: string[]
+    typing_profile: 'fast' | 'normal' | 'slow'
+    captcha_key: string | null
+    max_actions_per_hour: number
+  }
 }
 
 export interface StudentProfile {

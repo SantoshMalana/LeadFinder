@@ -64,7 +64,7 @@ def _push_log_to_redis(line: str):
         headers = {"Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}"}
         
         with httpx.Client() as client:
-            client.post(url, headers=headers, json=line, timeout=5.0)
+            client.post(url, headers=headers, json=[line], timeout=5.0)
             client.get(trim_url, headers=headers, timeout=5.0)
     except Exception:
         pass
@@ -92,7 +92,7 @@ async def supabase_insert(table: str, data: dict, timeout=30):
             resp.raise_for_status()
             # If Prefer: return=representation is used, it returns JSON. Otherwise 201 Created.
             if resp.status_code in [200, 201]:
-                return data
+                return resp.json() if resp.text else data
             return None
     except Exception as e:
         log(f"⚠️  Supabase insert error: {e}")
@@ -315,7 +315,7 @@ class TelegramScraper:
             message_id=event.id,
             sender=sender,
             date=event.date,
-            group_username=getattr(chat, "username", ""),
+            group_username=getattr(chat, "username", "") or str(getattr(chat, "id", "")),
         )
 
     async def process_message_data(self, text: str, group_name: str, message_id: int,
@@ -397,18 +397,25 @@ class TelegramScraper:
 
         saved = await supabase_insert("jobs", job_data)
         if saved:
-            log(f"   ✅ Saved to dashboard! (ID: {saved.get('id', '?')[:8]}...)")
+            job_id = saved.get("id", "")
+            log(f"   ✅ Saved to dashboard! (ID: {str(job_id)[:8]}...)")
             
-            # TRIGGER AUTO APPLY
             import subprocess
+            import platform
+            kwargs = {}
+            if platform.system() != 'Windows':
+                kwargs['start_new_session'] = True
+            else:
+                kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
+                
             if apply_email:
                 log(f"   ✉️ Found email: {apply_email} - Auto-sending cold email!")
                 try:
                     subprocess.Popen(
-                        ["npx", "tsx", "agents/email/mailer.ts", self.user_id, apply_email, text[:1000]],
+                        ["npx", "tsx", "agents/email/mailer.ts", self.user_id, apply_email, str(job_id)],
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
-                        start_new_session=True
+                        **kwargs
                     )
                     log(f"   🚀 Gmail Agent dispatched in background.")
                 except Exception as e:
@@ -417,10 +424,10 @@ class TelegramScraper:
                 log(f"   🔗 Found Google Form link: {apply_link} - Triggering Auto-Applier!")
                 try:
                     subprocess.Popen(
-                        ["npx", "tsx", "agents/forms/googleForms.ts", self.user_id, apply_link],
+                        ["npx", "tsx", "agents/forms/googleForms.ts", self.user_id, apply_link, str(job_id)],
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
-                        start_new_session=True
+                        **kwargs
                     )
                     log(f"   🚀 Google Forms Agent dispatched in background.")
                 except Exception as e:

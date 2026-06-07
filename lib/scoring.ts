@@ -31,7 +31,8 @@ JSON only: {"score": 8, "reason": "one sentence explanation"}`,
       max_tokens: 80,
     })
 
-    const { score, reason } = JSON.parse(res.choices[0].message.content || '{}')
+    const content = res.choices?.[0]?.message?.content || '{}'
+    const { score, reason } = JSON.parse(content)
     return { score: Number(score) || 0, reason: reason || '' }
   } catch {
     return { score: 0, reason: 'scoring failed' }
@@ -84,7 +85,8 @@ JSON only: {"score": 8, "reason": "one sentence", "should_apply": true}`,
       max_tokens: 100,
     })
 
-    const parsed = JSON.parse(res.choices[0].message.content || '{}')
+    const content = res.choices?.[0]?.message?.content || '{}'
+    const parsed = JSON.parse(content)
     return {
       score: Number(parsed.score) || 0,
       reason: parsed.reason || '',

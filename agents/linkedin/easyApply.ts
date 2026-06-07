@@ -1,5 +1,10 @@
 import type { Page } from 'playwright'
-import { humanDelay, humanClick, humanType, takeScreenshot } from './browser'
+import { humanDelay, humanClick, takeScreenshot } from './browser'
+import { humanTypeText } from './humanTyping'
+import { PlatformCircuitBreaker } from './circuitBreaker'
+import { generateCoverLetter } from './pdfGenerator'
+import { solveCaptcha } from './captchaSolver'
+import { signRequest } from '../../lib/sign'
 import type { ParsedCV } from '../../types'
 
 const API_BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
@@ -8,6 +13,12 @@ const API_BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
  * Click the Easy Apply button on a LinkedIn job page
  */
 export async function startEasyApply(page: Page): Promise<boolean> {
+  const circuitBreaker = new PlatformCircuitBreaker('linkedin')
+  if (!(await circuitBreaker.canProceed())) {
+    console.log('🛑 Circuit Breaker open: Cannot start application.')
+    return false
+  }
+
   try {
     const btn = await page.$('button:has-text("Easy Apply"), .jobs-apply-button:has-text("Easy Apply")')
     if (!btn) {
@@ -30,21 +41,21 @@ export async function fillEasyApplyForm(page: Page, profile: ParsedCV): Promise<
   const phoneInput = await page.$('input[name*="phone"], input[id*="phone"], input[aria-label*="phone" i]')
   if (phoneInput) {
     const val = await phoneInput.inputValue()
-    if (!val && profile.phone) await humanType(page, 'input[name*="phone"], input[id*="phone"]', profile.phone)
+    if (!val && profile.phone) await humanTypeText(page, 'input[name*="phone"], input[id*="phone"]', profile.phone)
   }
 
   // Fill email if empty
   const emailInput = await page.$('input[name*="email"], input[type="email"]')
   if (emailInput) {
     const val = await emailInput.inputValue()
-    if (!val && profile.email) await humanType(page, 'input[name*="email"], input[type="email"]', profile.email)
+    if (!val && profile.email) await humanTypeText(page, 'input[name*="email"], input[type="email"]', profile.email)
   }
 
   // Fill location/city
   const cityInput = await page.$('input[name*="city"], input[aria-label*="city" i], input[aria-label*="location" i]')
   if (cityInput) {
     const val = await cityInput.inputValue()
-    if (!val && profile.location) await humanType(page, 'input[name*="city"], input[aria-label*="city" i]', profile.location)
+    if (!val && profile.location) await humanTypeText(page, 'input[name*="city"], input[aria-label*="city" i]', profile.location)
   }
 
   // Handle text areas (cover letter, additional info)
@@ -110,9 +121,9 @@ export async function handleScreeningQuestion(
       // Try to click "Yes" or default to first
       const yesOption = await q.$('label:has-text("Yes"), input[value="Yes"]')
       if (yesOption) {
-        await yesOption.click().catch(() => {})
+        await yesOption.click({ force: true }).catch(() => {})
       } else {
-        await radioInputs[0].click().catch(() => {})
+        await radioInputs[0].click({ force: true }).catch(() => {})
       }
       continue
     }
@@ -127,22 +138,29 @@ export async function handleScreeningQuestion(
 
       // For text inputs — call AI to generate answer
       try {
+        const payload = { job_id: jobId, question: questionText, user_id: userId }
         const res = await fetch(`${API_BASE}/api/generate/answer`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ job_id: jobId, question: questionText, user_id: userId }),
+          headers: signRequest(payload),
+          body: JSON.stringify(payload),
         })
+        if (!res.ok) throw new Error('AI answer API failed')
         const data = await res.json()
         if (data.answer) {
           await inputEl.fill(data.answer)
         } else {
-          // Fallback if AI fails: e.g. "How many years of experience..." -> "2"
-          if (questionText.toLowerCase().includes('year')) await inputEl.fill('3')
-          else await inputEl.fill('Yes')
+          // AI returned no answer — use a safe fallback for text inputs
+          try {
+            if (tagName === 'input' || tagName === 'textarea') {
+              await inputEl.fill('N/A')
+            }
+            // For radios, skip silently to avoid invalidating the form
+          } catch (fallbackErr) {
+            console.log('⚠️ Failed to apply fallback value to input.')
+          }
         }
       } catch (err) {
         console.error(`⚠️ Failed to answer: "${questionText}"`, err)
-        await inputEl.fill('Yes') // Ultimate fallback
       }
     }
 
@@ -151,15 +169,21 @@ export async function handleScreeningQuestion(
 }
 
 /**
- * Upload resume file
+ * Upload resume or cover letter file
  */
 export async function uploadResume(page: Page, resumePath: string): Promise<boolean> {
   try {
-    const fileInput = await page.$('input[type="file"]')
-    if (fileInput) {
-      await fileInput.setInputFiles(resumePath)
+    const fileInputs = await page.$$('input[type="file"]')
+    let uploaded = false
+    for (const input of fileInputs) {
+       // Just upload to the first available file input if not specified
+       await input.setInputFiles(resumePath)
+       uploaded = true
+       break
+    }
+    if (uploaded) {
       await humanDelay(1500, 3000)
-      console.log('📎 Resume uploaded')
+      console.log('📎 File uploaded')
       return true
     }
     return false
@@ -185,9 +209,27 @@ export async function handleMultiStep(
     // Check for CAPTCHA
     const captcha = await page.$('[class*="captcha"], #captcha, iframe[src*="captcha"]')
     if (captcha) {
-      console.log('🛑 CAPTCHA detected — needs human intervention')
-      await takeScreenshot(page, `captcha-step-${step}`)
-      return 'captcha'
+      console.log('🛑 CAPTCHA detected')
+      const solved = await solveCaptcha(page)
+      if (!solved) {
+        console.log('❌ Failed to solve CAPTCHA — needs human intervention')
+        await takeScreenshot(page, `captcha-step-${step}`)
+        return 'captcha'
+      }
+    }
+
+    // Check if Cover Letter upload is requested
+    const fileInputText = await page.evaluate(() => document.body.innerText)
+    if (fileInputText.toLowerCase().includes('cover letter') && !fileInputText.toLowerCase().includes('no cover letter') && await page.$('input[type="file"]')) {
+       console.log('📝 Cover letter requested! Generating dynamic PDF...')
+       try {
+         // Get job details from the page or pass it down. We'll extract a bit of context here.
+         const jobContext = await page.evaluate(() => document.querySelector('.jobs-description-content')?.textContent || 'Software Developer')
+         const pdfPath = await generateCoverLetter(profile, jobContext.substring(0, 500))
+         await uploadResume(page, pdfPath)
+       } catch (err) {
+         console.error('⚠️ Failed to attach cover letter:', err)
+       }
     }
 
     // Fill any visible form fields

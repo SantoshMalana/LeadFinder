@@ -60,7 +60,7 @@ export async function startAutoApply(config: AgentConfig) {
     await humanDelay(3000, 5000)
 
     // Check if logged in
-    let isLoggedIn = page.url().includes('/feed') || page.url().includes('/jobs') || await page.$('.global-nav__me') !== null
+    const isLoggedIn = page.url().includes('/feed') || page.url().includes('/jobs') || await page.$('.global-nav__me') !== null
     if (!isLoggedIn) {
       console.log('⚠️  Not logged into LinkedIn. Please log in manually.')
       console.log('   The browser window is open — log in and the agent will continue.')
@@ -94,7 +94,7 @@ export async function startAutoApply(config: AgentConfig) {
           await new Promise(r => setTimeout(r, breakMs))
         }
 
-        // Score the job
+        let matchData
         try {
           const matchRes = await fetch(`${API_BASE}/api/jobs/match`, {
             method: 'POST',
@@ -108,15 +108,21 @@ export async function startAutoApply(config: AgentConfig) {
               user_id: config.user_id,
             }),
           })
-          const matchData = await matchRes.json()
+          if (!matchRes.ok) throw new Error(`API returned ${matchRes.status}`)
+          matchData = await matchRes.json()
+        } catch (err) {
+          console.log(`⚠️ Match error for "${listing.title}":`, err)
+          continue
+        }
 
-          if (matchData.score < config.threshold) {
-            console.log(`⏭️  Skip: "${listing.title}" at ${listing.company} (score: ${matchData.score} is below threshold ${config.threshold})`)
-            continue
-          }
+        if (matchData.score < config.threshold) {
+          console.log(`⏭️  Skip: "${listing.title}" at ${listing.company} (score: ${matchData.score} is below threshold ${config.threshold})`)
+          continue
+        }
 
-          console.log(`\n🎯 Match! "${listing.title}" at ${listing.company} (score: ${matchData.score})`)
+        console.log(`\n🎯 Match! "${listing.title}" at ${listing.company} (score: ${matchData.score})`)
 
+        try {
           // Navigate to job
           if (listing.job_url) {
             await page.goto(listing.job_url, { waitUntil: 'domcontentloaded' })
@@ -150,15 +156,11 @@ export async function startAutoApply(config: AgentConfig) {
           await logAction(matchData.job_id, 'form_detected', {})
 
           // Get profile for form filling
-          const profileRes = await fetch(`${API_BASE}/api/autoapply/status?user_id=${config.user_id}`)
-          const statusData = await profileRes.json()
-
-          // Fill form (we need parsed_data from profile)
-          const profileDataRes = await fetch(`${API_BASE}/api/cv/parse`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_id: config.user_id }),
-          })
+          let statusData: any = {}
+          try {
+            const profileRes = await fetch(`${API_BASE}/api/autoapply/status?user_id=${config.user_id}`)
+            if (profileRes.ok) statusData = await profileRes.json()
+          } catch {}
 
           // Handle multi-step form fallback profile
           const dummyProfile: ParsedCV = {
@@ -169,7 +171,7 @@ export async function startAutoApply(config: AgentConfig) {
           }
 
           // Use actual profile from earlier match if available
-          const profileToUse = statusData.parsed_data || dummyProfile
+          const profileToUse = statusData?.parsed_data || dummyProfile
           const result = await handleMultiStep(page, profileToUse, matchData.job_id, config.user_id)
 
           if (result === 'submitted') {

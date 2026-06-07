@@ -1,15 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { generateScreeningAnswer } from '@/lib/cover-letter'
+import { verifyRequest } from '@/lib/sign'
 
 export async function POST(req: NextRequest) {
   try {
+    // Auth: Support both legacy API key AND new HMAC signature
     const apiKey = req.headers.get('x-api-key')
-    if (apiKey !== process.env.INTERNAL_API_KEY) {
+    const hmacTimestamp = req.headers.get('X-Timestamp') || ''
+    const hmacSig = req.headers.get('X-Signature') || ''
+
+    const body = await req.text()
+    const hasLegacyKey = apiKey === process.env.INTERNAL_API_KEY
+    const hasValidHmac = hmacTimestamp && hmacSig && verifyRequest(body, hmacTimestamp, hmacSig)
+
+    if (!hasLegacyKey && !hasValidHmac) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { job_id, question, user_id } = await req.json()
+    const { job_id, question, user_id } = JSON.parse(body)
 
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,

@@ -80,8 +80,13 @@ JSON only, no extra text.`,
     max_tokens: 2000,
   })
 
-  const content = res.choices[0].message.content || '{}'
-  return JSON.parse(content) as ParsedCV
+  try {
+    const content = res.choices?.[0]?.message?.content || '{}'
+    return JSON.parse(content) as ParsedCV
+  } catch (err) {
+    console.error('Failed to parse structured CV data', err)
+    throw new Error('Failed to parse structured CV data')
+  }
 }
 
 /**

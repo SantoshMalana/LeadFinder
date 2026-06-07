@@ -80,12 +80,10 @@ async function fillUniversalForm(url: string, userId: string) {
       }
     }
 
-    // Attempt to find a submit button
     const submitBtn = await page.$('button[type="submit"], input[type="submit"], button:has-text("Submit"), button:has-text("Apply")')
     if (submitBtn) {
       console.log('✅ Found submit button. Simulating click...')
-      // Uncomment to actually submit:
-      // await submitBtn.click()
+      await submitBtn.click()
     } else {
       console.log('⚠️ Could not find a clear Submit button.')
     }

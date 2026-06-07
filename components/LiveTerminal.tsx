@@ -2,32 +2,51 @@
 
 import { useState, useEffect, useRef } from 'react'
 
-export default function LiveTerminal({ isOpen, onClose, defaultSource = 'agent' }: { 
+interface LiveTerminalProps {
+  type: 'agent' | 'telegram'
+  userId: string
   isOpen: boolean
   onClose: () => void
-  defaultSource?: 'agent' | 'telegram'
-}) {
-  const [logs, setLogs] = useState<string>('Connecting to agent stream...')
-  const [source, setSource] = useState<'agent' | 'telegram'>(defaultSource)
+}
+
+export default function LiveTerminal({ isOpen, onClose, type: initialType, userId }: LiveTerminalProps) {
+  const [logs, setLogs] = useState<string[]>([])
+  const [source, setSource] = useState<'agent' | 'telegram'>(initialType)
   const terminalEndRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
+  const isPollingRef = useRef(false)
 
   useEffect(() => {
-    if (!isOpen) return
+    if (!isOpen || !userId) return
+    let timeoutId: NodeJS.Timeout
 
     const fetchLogs = async () => {
       try {
-        const res = await fetch(`/api/logs?source=${source}`, { cache: 'no-store' })
+        isPollingRef.current = true
+        const res = await fetch(`/api/logs?type=${source}&limit=50&user_id=${userId}`, { cache: 'no-store' })
+        if (!res.ok) {
+          setLogs(prev => [...prev, `> Failed to fetch logs (Status: ${res.status})`])
+          return
+        }
         const data = await res.json()
-        setLogs(data.logs)
-      } catch {}
+        // API returns { logs: "line1\nline2..." }
+        if (typeof data.logs === 'string') {
+          setLogs(data.logs.split('\n').filter(Boolean))
+        } else if (Array.isArray(data.logs)) {
+          setLogs(data.logs.map((l: any) => typeof l === 'string' ? l : JSON.stringify(l)))
+        }
+      } catch (err) {
+        setLogs(prev => [...prev, '> Connection lost. Retrying...'])
+      } finally {
+        isPollingRef.current = false
+        timeoutId = setTimeout(fetchLogs, 2000)
+      }
     }
 
     fetchLogs()
-    const interval = setInterval(fetchLogs, 1500)
-    return () => clearInterval(interval)
-  }, [isOpen, source])
+    return () => clearTimeout(timeoutId)
+  }, [isOpen, source, userId])
 
   useEffect(() => {
     if (autoScroll && terminalEndRef.current) {
@@ -99,7 +118,9 @@ export default function LiveTerminal({ isOpen, onClose, defaultSource = 'agent' 
           onScroll={handleScroll}
           className="flex-1 overflow-y-auto p-4 font-mono text-sm whitespace-pre-wrap text-[#00ff00] bg-[#0c0c0c] custom-scrollbar"
         >
-          {logs}
+          {logs.map((line, i) => (
+            <div key={i}>{line}</div>
+          ))}
           <div ref={terminalEndRef} />
         </div>
         

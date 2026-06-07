@@ -21,8 +21,9 @@ function log(msg: string) {
   redis.lpush('agent_logs', line).catch(() => {})
   redis.ltrim('agent_logs', 0, 100).catch(() => {})
 }
+import { ParsedCV } from '../../types'
 
-async function generateColdEmail(cv: any, jobDesc: string): Promise<{ subject: string; body: string }> {
+async function generateColdEmail(cv: ParsedCV, jobDesc: string): Promise<{ subject: string; body: string }> {
   const prompt = `
 You are an expert technical recruiter writing a cold email for a candidate.
 Write a highly professional, concise, and persuasive cold email applying for this job.
@@ -49,23 +50,30 @@ Return ONLY a valid JSON object in this exact format, with no markdown formattin
 }
 `
 
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${GROQ_API_KEY}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.3,
-    })
-  })
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.3,
+        })
+      })
 
-  const data = await res.json()
-  let content = data.choices[0].message.content
-  content = content.replace(/^```json/, '').replace(/```$/, '').trim()
-  return JSON.parse(content)
+      if (!res.ok) continue
+      const data = await res.json()
+      let content = data.choices?.[0]?.message?.content
+      if (!content) continue
+      content = content.replace(/^```json/, '').replace(/```$/, '').trim()
+      return JSON.parse(content)
+    } catch {}
+  }
+  throw new Error('Failed to generate email')
 }
 
 export async function sendColdEmail(userId: string, targetEmail: string, jobDesc: string) {
@@ -85,14 +93,21 @@ export async function sendColdEmail(userId: string, targetEmail: string, jobDesc
     return
   }
 
+  // Check if we already emailed this address for this user
+  const { data: existing } = await supabase.from('jobs').select('id').eq('user_id', userId).eq('company', targetEmail).maybeSingle()
+  if (existing) {
+    log(`⚠️ Already sent an email to ${targetEmail}. Skipping to prevent spam.`)
+    return
+  }
+
   // 2. Draft Email
   log(`🧠 Using Groq AI to draft the perfect cold email...`)
   const draft = await generateColdEmail(profile.parsed_data, jobDesc)
   log(`✅ Draft complete. Subject: "${draft.subject}"`)
 
   // 3. Human Delay (Anti-Detect)
-  // Random delay between 15 seconds and 45 seconds for testing (In production, 3 to 15 mins)
-  const delayMs = Math.floor(Math.random() * (45000 - 15000 + 1) + 15000)
+  // Random delay between 3 and 15 mins (production logic)
+  const delayMs = Math.floor(Math.random() * (900000 - 180000 + 1) + 180000)
   log(`⏳ Simulating human drafting... waiting ${Math.round(delayMs/1000)} seconds before sending.`)
   await new Promise(res => setTimeout(res, delayMs))
 
@@ -117,14 +132,26 @@ export async function sendColdEmail(userId: string, targetEmail: string, jobDesc
     log(`🎯 SUCCESS! Email sent successfully to ${targetEmail}.`)
     
     // Mark lead as applied in DB (Optional logic here)
+    await supabase.from('jobs').insert({
+      user_id: userId,
+      source: 'email',
+      source_id: `email_${Date.now()}`,
+      company: targetEmail,
+      title: 'Cold Email Application',
+      description: draft.body,
+      job_url: targetEmail,
+      status: 'applied',
+      applied_at: new Date().toISOString()
+    })
     
-  } catch (error: any) {
-    log(`🚨 Failed to send email: ${error.message}`)
+  } catch (error) {
+    log(`🚨 Failed to send email: ${(error as any).message}`)
   }
 }
 
 // If run directly for testing:
-if (require.main === module) {
+const isMain = typeof require !== 'undefined' && require.main === module;
+if (isMain) {
   const userId = process.argv[2]
   const targetEmail = process.argv[3]
   const jobDesc = process.argv[4] || "Looking for a React developer to build a cool dashboard."
