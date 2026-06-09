@@ -1,6 +1,7 @@
 import { inngest } from './client'
 import { scrapeAllSubreddits, DEFAULT_SUBREDDITS } from '@/scrapers/reddit'
 import { createClient } from '@supabase/supabase-js'
+import { scoreLeadPost } from '@/lib/scoring'
 
 export const scrapeJob = inngest.createFunction(
   {
@@ -38,22 +39,39 @@ export const scrapeJob = inngest.createFunction(
         )
 
         if (posts.length > 0) {
-          await supabase.from('leads').insert(
-            posts.map(post => ({
-              campaign_id: campaign.id,
-              platform: post.platform,
-              post_id: post.post_id,
-              post_title: post.post_title,
-              post_body: post.post_body,
-              post_url: post.post_url,
-              author: post.author,
-              status: 'new',
-            }))
+          // Score all posts first
+          const scored = await Promise.all(
+            posts.map(async post => {
+              const { score, reason } = await scoreLeadPost(post)
+              return { post, score, reason }
+            })
           )
+
+          const minScore = campaign.min_score ?? 6
+          const passing = scored.filter(s => s.score >= minScore)
+
+          if (passing.length > 0) {
+            await supabase.from('leads').insert(
+              passing.map(({ post, score, reason }) => ({
+                campaign_id: campaign.id,
+                platform: post.platform,
+                post_id: post.post_id,
+                post_title: post.post_title,
+                post_body: post.post_body,
+                post_url: post.post_url,
+                author: post.author,
+                score,
+                score_reason: reason,
+                status: 'new',
+              }))
+            )
+          }
+          
+          console.log(`✅ Saved ${passing.length} leads (out of ${posts.length} found) for campaign: ${campaign.name}`)
+          return { saved: passing.length }
         }
 
-        console.log(`✅ Saved ${posts.length} leads for campaign: ${campaign.name}`)
-        return { saved: posts.length }
+        return { saved: 0 }
       })
     }
   }

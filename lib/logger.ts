@@ -29,7 +29,7 @@ export function createLogger(namespace: string, userId?: string) {
       const line = `[${new Date().toLocaleTimeString()}] ${cleanMsg}`
       console.log(line)
       redis.lpush(logKey, line).catch(() => {})
-      redis.ltrim(logKey, 0, 200).catch(() => {})
+      redis.ltrim(logKey, 0, 499).catch(() => {})
     },
     error: (msg: string, err?: unknown) => {
       const errMsg = err instanceof Error ? err.message : String(err)

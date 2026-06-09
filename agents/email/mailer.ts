@@ -21,7 +21,7 @@ function log(msg: string) {
   console.log(line)
   const userId = process.argv[2] || process.env.AUTOAPPLY_USER_ID || 'global'
   redis.lpush(`agent_logs:${userId}`, line).catch(() => {})
-  redis.ltrim(`agent_logs:${userId}`, 0, 100).catch(() => {})
+  redis.ltrim(`agent_logs:${userId}`, 0, 499).catch(() => {})
 }
 import { ParsedCV } from '../../types'
 

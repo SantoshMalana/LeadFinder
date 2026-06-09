@@ -20,7 +20,7 @@ function log(msg: string) {
   const line = `[${new Date().toLocaleTimeString()}] ${msg}`
   console.log(line)
   redis.lpush(`agent_logs:${USER_ID}`, line).catch(() => {})
-  redis.ltrim(`agent_logs:${USER_ID}`, 0, 100).catch(() => {})
+  redis.ltrim(`agent_logs:${USER_ID}`, 0, 499).catch(() => {})
 }
 
 import { ParsedCV } from '../../types'

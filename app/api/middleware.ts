@@ -16,14 +16,12 @@ export function withInternalAuth(
     // Read body once
     const body = await req.text()
 
-    // If signature headers are present, validate them
-    if (timestamp && sig) {
-      if (!verifyRequest(body, timestamp, sig)) {
-        return NextResponse.json(
-          { error: 'Invalid signature or expired request' },
-          { status: 401 }
-        )
-      }
+    // ALWAYS require valid HMAC — no fallthrough
+    if (!timestamp || !sig || !verifyRequest(body, timestamp, sig)) {
+      return NextResponse.json(
+        { error: 'Unauthorized — valid HMAC signature required' },
+        { status: 401 }
+      )
     }
 
     // Pass the already-consumed body to the handler

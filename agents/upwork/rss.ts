@@ -128,7 +128,7 @@ Return ONLY the text of the proposal. Keep it short, focused on results, and sta
         match_reason: matchReason,
         status: 'discovered',
         discovered_at: new Date().toISOString(),
-        metadata: { proposal_draft: proposalDraft },
+        generated_content: { cover_letter: proposalDraft },
       })
 
       console.log(`✅ Saved Upwork job (score: ${matchScore}/10) and proposal draft to DB!`)

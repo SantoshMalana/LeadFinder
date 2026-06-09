@@ -1,14 +1,22 @@
+import { Redis } from '@upstash/redis'
 import { flashModel } from './gemini'
 import { groq } from './groq'
 import type { ParsedCV, Job } from '@/types'
+
+const redis = Redis.fromEnv()
 
 /**
  * Generate a tailored cover letter for a specific job
  */
 export async function generateCoverLetter(
   job: Pick<Job, 'title' | 'company' | 'description' | 'location'>,
-  profile: ParsedCV
+  profile: ParsedCV,
+  missingKeywords: string[] = []
 ): Promise<string> {
+  const keywordPrompt = missingKeywords.length > 0 
+    ? `\nCRITICAL: Naturally weave in the following missing keywords from the job description: ${missingKeywords.join(', ')}`
+    : ''
+
   const result = await flashModel.generateContent(`
 You are writing a cover letter for a job application.
 
@@ -33,7 +41,7 @@ Write a concise, professional cover letter (200-300 words) that:
 - Shows knowledge of the company if possible
 - Ends with a confident call to action
 - Sounds human and authentic, NOT generic or AI-generated
-- Does NOT use phrases like "I am writing to express my interest" or "I believe I would be a great fit"
+- Does NOT use phrases like "I am writing to express my interest" or "I believe I would be a great fit"${keywordPrompt}
 
 Cover letter only, no subject line or formatting instructions.`)
 
@@ -46,8 +54,14 @@ Cover letter only, no subject line or formatting instructions.`)
 export async function generateScreeningAnswer(
   question: string,
   job: Pick<Job, 'title' | 'company' | 'description'>,
-  profile: ParsedCV
+  profile: ParsedCV,
+  jobId?: string
 ): Promise<string> {
+  // Try cache first
+  const cacheKey = `ans:${jobId || 'global'}:${Buffer.from(question).toString('base64').slice(0, 32)}`
+  const cached = await redis.get<string>(cacheKey)
+  if (cached) return cached
+
   const res = await groq.chat.completions.create({
     model: 'llama-3.3-70b-versatile',
     messages: [{
@@ -73,7 +87,14 @@ Answer only, nothing else.`,
     max_tokens: 200,
   })
 
-  return res.choices[0].message.content || ''
+  const answer = res.choices[0].message.content || ''
+  
+  // Cache for 24 hours
+  if (answer) {
+    await redis.setex(cacheKey, 86400, answer)
+  }
+
+  return answer
 }
 
 /**

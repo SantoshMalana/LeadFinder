@@ -2,16 +2,32 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { createClient as createAuthClient } from '@/lib/supabase/server'
 import { scoreJobMatch } from '@/lib/scoring'
+import { verifyRequest } from '@/lib/sign'
 
 export async function POST(req: NextRequest) {
   try {
-    const authClient = await createAuthClient()
-    const { data: { user } } = await authClient.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
-    const user_id = user.id
+    const bodyText = await req.text()
+    const payload = JSON.parse(bodyText)
 
-    const { title, company, description, location, job_type, source, job_url } = await req.json()
+    const hmacTimestamp = req.headers.get('X-Timestamp') || ''
+    const hmacSig = req.headers.get('X-Signature') || ''
+    
+    let user_id = payload.user_id
+
+    // Check auth
+    const hasValidHmac = hmacTimestamp && hmacSig && verifyRequest(bodyText, hmacTimestamp, hmacSig)
+    if (!hasValidHmac) {
+      const authClient = await createAuthClient()
+      const { data: { user } } = await authClient.auth.getUser()
+      if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+      user_id = user.id
+    }
+
+    if (!user_id) return NextResponse.json({ error: 'Missing user_id' }, { status: 400 })
+
+    const { title, company, description, location, job_type, source, job_url, persona_used, cv_version } = payload
     if (!title || !company) return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+    
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -51,6 +67,8 @@ export async function POST(req: NextRequest) {
       match_score: result.score,
       match_reason: result.reason,
       status,
+      persona_used: persona_used || 'default',
+      cv_version: cv_version || 'v1',
     }).select().single()
 
     if (insertError) return NextResponse.json({ error: insertError.message }, { status: 500 })

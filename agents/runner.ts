@@ -9,6 +9,16 @@ import { startEasyApply, handleMultiStep } from './linkedin/easyApply'
 import { shouldTakeBreak, getBreakDuration, addHumanBehavior, checkForRestriction } from './linkedin/antiDetect'
 import type { ParsedCV } from '../types'
 import { Redis } from '@upstash/redis'
+import { signRequest } from '../lib/sign'
+import { selectPersona } from '../lib/persona'
+import { createClient } from '@supabase/supabase-js'
+
+const API_BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+)
 
 // Override console.log to stream to Upstash Redis for the Live Terminal
 const originalLog = console.log
@@ -23,12 +33,10 @@ console.log = (...args) => {
   
   // Stream to Redis in background
   redis.lpush(logKey, line).catch(() => {})
-  redis.ltrim(logKey, 0, 100).catch(() => {})
+  redis.ltrim(logKey, 0, 499).catch(() => {})
   
   originalLog(...args)
 }
-
-const API_BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
 
 interface AgentConfig {
   user_id: string
@@ -116,17 +124,34 @@ export async function startAutoApply(config: AgentConfig) {
 
         let matchData
         try {
+          // Fetch job description for persona selection
+          const details = await getJobDetails(page, listing.job_url)
+          const persona = await selectPersona(listing.title, details.description || '')
+
+          // Fetch user profile
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('parsed_data')
+            .eq('user_id', config.user_id)
+            .single()
+
+          // Score job using internal API (with HMAC)
+          const payload = JSON.stringify({
+            title: listing.title,
+            company: listing.company,
+            location: listing.location,
+            source: 'linkedin',
+            job_url: listing.job_url,
+            user_id: config.user_id,
+            persona_used: persona,
+            cv_version: profile?.parsed_data?.last_updated || 'v1',
+            description: details.description || ''
+          })
+          
           const matchRes = await fetch(`${API_BASE}/api/jobs/match`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              title: listing.title,
-              company: listing.company,
-              location: listing.location,
-              source: 'linkedin',
-              job_url: listing.job_url,
-              user_id: config.user_id,
-            }),
+            headers: signRequest(payload),
+            body: payload,
           })
           if (!matchRes.ok) throw new Error(`API returned ${matchRes.status}`)
           matchData = await matchRes.json()
@@ -230,7 +255,11 @@ export async function startAutoApply(config: AgentConfig) {
 
 async function checkShouldContinue(userId: string): Promise<boolean> {
   try {
-    const res = await fetch(`${API_BASE}/api/autoapply/status?user_id=${userId}`)
+    const payload = `user_id=${userId}`
+
+    const res = await fetch(`${API_BASE}/api/autoapply/status?user_id=${userId}`, {
+      headers: signRequest(payload)
+    })
     const data = await res.json()
     return data.is_running === true
   } catch {
@@ -240,11 +269,11 @@ async function checkShouldContinue(userId: string): Promise<boolean> {
 
 async function updateJobStatus(jobId: string, status: string, failureReason?: string) {
   try {
-    await fetch(`${API_BASE}/api/jobs/match`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ job_id: jobId, status, failure_reason: failureReason }),
-    })
+    const updateData: any = { status }
+    if (status === 'applied') updateData.applied_at = new Date().toISOString()
+    if (failureReason) updateData.match_reason = failureReason
+
+    await supabase.from('jobs').update(updateData).eq('id', jobId)
   } catch {}
 }
 

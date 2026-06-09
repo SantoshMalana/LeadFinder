@@ -18,7 +18,7 @@ export const alertJob = inngest.createFunction(
 
     const { data: leads } = await supabase
       .from('leads')
-      .select('*, campaigns(*, users(*))')
+      .select('*, campaigns(*)')
       .gte('score', 9)
       .eq('status', 'new')
       .limit(20)
@@ -29,12 +29,15 @@ export const alertJob = inngest.createFunction(
 
     for (const lead of leads) {
       await step.run(`alert-lead-${lead.id}`, async () => {
-        const user = lead.campaigns?.users
-        if (!user?.email) return
+        const userId = lead.campaigns?.user_id
+        if (!userId) return
+
+        const { data: { user: authUser } } = await supabase.auth.admin.getUserById(userId)
+        if (!authUser?.email) return
 
         await resend.emails.send({
           from: process.env.RESEND_FROM_EMAIL!,
-          to: user.email,
+          to: authUser.email,
           subject: `🔥 ${lead.score}/10 lead: ${lead.post_title.slice(0, 60)}`,
           html: `
             <h2>🔥 New High-Intent Lead!</h2>

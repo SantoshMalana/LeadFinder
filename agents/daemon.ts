@@ -4,8 +4,11 @@ import treeKill from 'tree-kill'
 import * as cron from 'node-cron'
 import * as dotenv from 'dotenv'
 import * as path from 'path'
+import { validateEnv } from '../lib/validateEnv'
 
 dotenv.config({ path: path.join(process.cwd(), '.env.local') })
+
+validateEnv('daemon')
 
 if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
   console.error('[Daemon] Missing Supabase credentials in .env.local')

@@ -31,38 +31,15 @@ export async function recordOutcome(data: RejectionData) {
     { type: 'job_type', value: job.job_type || 'unknown' },
   ]
 
-  for (const pattern of patterns) {
-    const { data: existing } = await supabase
-      .from('rejection_patterns')
-      .select('*')
-      .eq('user_id', data.user_id)
-      .eq('pattern_type', pattern.type)
-      .eq('pattern_value', pattern.value)
-      .single()
-
-    if (existing) {
-      const newSuccess = existing.success_count + (isSuccess ? 1 : 0)
-      const newFailure = existing.failure_count + (isSuccess ? 0 : 1)
-      const newTotal = existing.total_count + 1
-      await supabase.from('rejection_patterns').update({
-        success_count: newSuccess,
-        failure_count: newFailure,
-        total_count: newTotal,
-        success_rate: newTotal > 0 ? newSuccess / newTotal : 0,
-        last_updated: new Date().toISOString(),
-      }).eq('id', existing.id)
-    } else {
-      await supabase.from('rejection_patterns').insert({
-        user_id: data.user_id,
-        pattern_type: pattern.type,
-        pattern_value: pattern.value,
-        success_count: isSuccess ? 1 : 0,
-        failure_count: isSuccess ? 0 : 1,
-        total_count: 1,
-        success_rate: isSuccess ? 1 : 0,
-      })
-    }
-  }
+  // Use the atomic RPC (requires schema_v2_patch.sql to be executed)
+  await Promise.all(patterns.map(pattern => 
+    supabase.rpc('increment_rejection_pattern', {
+      p_user_id: data.user_id,
+      p_pattern_type: pattern.type,
+      p_pattern_value: pattern.value,
+      p_is_success: isSuccess
+    })
+  ))
 }
 
 /**
@@ -135,12 +112,17 @@ export async function markSilentRejections(userId: string) {
 
   if (!staleJobs?.length) return 0
 
-  let marked = 0
-  for (const job of staleJobs) {
-    await recordOutcome({ user_id: userId, job_id: job.id, status: 'no_response' })
-    await supabase.from('jobs').update({ status: 'rejected', failure_reason: 'No response after 7 days' }).eq('id', job.id)
-    marked++
-  }
+  // Record outcomes concurrently
+  await Promise.all(
+    staleJobs.map(job => recordOutcome({ user_id: userId, job_id: job.id, status: 'no_response' }))
+  )
 
-  return marked
+  // Batch update all jobs
+  const jobIds = staleJobs.map(j => j.id)
+  await supabase
+    .from('jobs')
+    .update({ status: 'rejected', failure_reason: 'No response after 7 days' })
+    .in('id', jobIds)
+
+  return staleJobs.length
 }

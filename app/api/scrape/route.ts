@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { createClient as createAuthClient } from '@/lib/supabase/server'
 import { scrapeAllSubreddits, DEFAULT_SUBREDDITS } from '@/scrapers/reddit'
 import { scoreLeadPost } from '@/lib/scoring'
 import type { Campaign } from '@/types'
@@ -56,8 +57,24 @@ async function processCampaign(
   return goodLeads.length
 }
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   try {
+    const isCron = req.headers.get('user-agent') === 'Inngest Server'
+    const inngestSig = req.headers.get('x-inngest-signature')
+    
+    let isAuthorized = false
+    if (isCron && inngestSig) {
+      isAuthorized = true
+    } else {
+      const authClient = await createAuthClient()
+      const { data: { user } } = await authClient.auth.getUser()
+      if (user) isAuthorized = true
+    }
+
+    if (!isAuthorized) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const supabase: SupabaseClient = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!

@@ -4,10 +4,17 @@ import PDFDocument from 'pdfkit'
 import type { ParsedCV } from '../../types'
 import * as dotenv from 'dotenv'
 import { getRandomGroqKey } from '../../lib/aiKeys'
+import { tailorResumeSummary } from '../../lib/cover-letter'
 
 dotenv.config({ path: path.join(process.cwd(), '.env.local') })
 
 export async function generateCoverLetter(profile: ParsedCV, jobDetails: string): Promise<string> {
+  console.log('🧠 Tailoring resume summary...')
+  const tailoredSummary = await tailorResumeSummary(
+    { title: 'Software Engineer', company: 'Hiring Company', description: jobDetails },
+    profile
+  )
+
   console.log('🧠 Using Groq AI to draft PDF cover letter...')
 
   const prompt = `Write a professional, concise cover letter for the following job description.
@@ -17,7 +24,7 @@ MY PROFILE:
 Name: ${profile.name}
 Experience: ${profile.years_of_experience} years
 Skills: ${profile.skills?.frameworks?.join(', ')}
-Summary: ${profile.summary}
+Summary: ${tailoredSummary}
 
 JOB DESCRIPTION:
 ${jobDetails}

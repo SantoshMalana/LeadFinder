@@ -1,23 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { generateScreeningAnswer } from '@/lib/cover-letter'
-import { verifyRequest } from '@/lib/sign'
+import { withInternalAuth } from '@/app/api/middleware'
 
-export async function POST(req: NextRequest) {
+export const POST = withInternalAuth(async (req: NextRequest, body: string) => {
   try {
-    // Auth: Support both legacy API key AND new HMAC signature
-    const apiKey = req.headers.get('x-api-key')
-    const hmacTimestamp = req.headers.get('X-Timestamp') || ''
-    const hmacSig = req.headers.get('X-Signature') || ''
-
-    const body = await req.text()
-    const hasLegacyKey = apiKey === process.env.INTERNAL_API_KEY
-    const hasValidHmac = hmacTimestamp && hmacSig && verifyRequest(body, hmacTimestamp, hmacSig)
-
-    if (!hasLegacyKey && !hasValidHmac) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
     const { job_id, question, user_id } = JSON.parse(body)
 
     const supabase = createClient(
@@ -39,7 +26,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No profile' }, { status: 400 })
     }
 
-    const answer = await generateScreeningAnswer(question, job, profile.parsed_data)
+    const answer = await generateScreeningAnswer(question, job, profile.parsed_data, job_id)
 
     await supabase.from('generated_content').insert({
       job_id,
@@ -53,4 +40,4 @@ export async function POST(req: NextRequest) {
     const message = err instanceof Error ? err.message : 'Generation failed'
     return NextResponse.json({ error: message }, { status: 500 })
   }
-}
+})

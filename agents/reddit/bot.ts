@@ -27,7 +27,7 @@ function log(msg: string) {
   console.log(line)
   if (redis) {
     redis.lpush(`agent_logs:${USER_ID}`, line).catch(() => {})
-    redis.ltrim(`agent_logs:${USER_ID}`, 0, 100).catch(() => {})
+    redis.ltrim(`agent_logs:${USER_ID}`, 0, 499).catch(() => {})
   }
 }
 

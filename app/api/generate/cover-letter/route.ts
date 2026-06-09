@@ -1,22 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { generateCoverLetter } from '@/lib/cover-letter'
-import { verifyRequest } from '@/lib/sign'
+import { withInternalAuth } from '@/app/api/middleware'
+import { applyPersona, atsScore, type Persona } from '@/lib/persona'
 
-export async function POST(req: NextRequest) {
+export const POST = withInternalAuth(async (req: NextRequest, body: string) => {
   try {
-    const apiKey = req.headers.get('x-api-key')
-    const hmacTimestamp = req.headers.get('X-Timestamp') || ''
-    const hmacSig = req.headers.get('X-Signature') || ''
-
-    const body = await req.text()
-    const hasLegacyKey = apiKey === process.env.INTERNAL_API_KEY
-    const hasValidHmac = hmacTimestamp && hmacSig && verifyRequest(body, hmacTimestamp, hmacSig)
-
-    if (!hasLegacyKey && !hasValidHmac) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
     const { job_id, persona } = JSON.parse(body)
 
     const supabase = createClient(
@@ -29,7 +18,7 @@ export async function POST(req: NextRequest) {
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('parsed_data')
+      .select('parsed_data, raw_cv_text')
       .eq('user_id', job.user_id)
       .single()
 
@@ -37,17 +26,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No profile data' }, { status: 400 })
     }
 
-    // Apply persona adjustment if provided
-    let cvData = profile.parsed_data
-    if (persona === 'startup') {
-      cvData = { ...cvData, headline: `${cvData.headline} | Move Fast, Ship Daily` }
-    } else if (persona === 'enterprise') {
-      cvData = { ...cvData, headline: `${cvData.headline} | Scalable Architecture` }
-    } else if (persona === 'ai_research') {
-      cvData = { ...cvData, headline: `${cvData.headline} | AI/ML Engineer` }
-    }
+    // Apply persona adjustment
+    const cvData = applyPersona(profile.parsed_data, (persona as Persona) || 'default')
+    
+    // Check ATS
+    const rawCvText = profile.raw_cv_text || JSON.stringify(profile.parsed_data)
+    const ats = await atsScore(rawCvText, job.description || '')
 
-    const coverLetter = await generateCoverLetter(job, cvData)
+    const coverLetter = await generateCoverLetter(job, cvData, ats.missing_keywords)
 
     await supabase.from('generated_content').insert({
       job_id,
@@ -61,4 +47,4 @@ export async function POST(req: NextRequest) {
     const message = err instanceof Error ? err.message : 'Generation failed'
     return NextResponse.json({ error: message }, { status: 500 })
   }
-}
+})
