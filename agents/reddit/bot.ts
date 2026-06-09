@@ -53,29 +53,40 @@ Return JSON only:
   "reply_draft": string (A very short, casual 2-sentence reply offering help as a full-stack dev. No emojis.)
 }`
 
-  try {
-    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${GROQ_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.1,
-        max_tokens: 300,
+  let retries = 3
+  while (retries > 0) {
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.1,
+          max_tokens: 300,
+        })
       })
-    })
-    if (!res.ok) return { is_lead: false, score: 0 }
-    const data = await res.json()
-    let content = data.choices?.[0]?.message?.content
-    if (!content) return { is_lead: false, score: 0 }
-    content = content.replace(/^```json/, '').replace(/```$/, '').trim()
-    return JSON.parse(content)
-  } catch (err) {
-    return { is_lead: false, score: 0 }
+      if (res.status === 429) {
+        retries--
+        if (retries === 0) return { is_lead: false, score: 0 }
+        log(`⚠️ Rate limited by Groq. Retrying in 5s...`)
+        await new Promise(r => setTimeout(r, 5000))
+        continue
+      }
+      if (!res.ok) return { is_lead: false, score: 0 }
+      const data = await res.json()
+      let content = data.choices?.[0]?.message?.content
+      if (!content) return { is_lead: false, score: 0 }
+      content = content.replace(/^```json/, '').replace(/```$/, '').trim()
+      return JSON.parse(content)
+    } catch (err) {
+      return { is_lead: false, score: 0 }
+    }
   }
+  return { is_lead: false, score: 0 }
 }
 
 async function startRedditAgent() {
@@ -128,8 +139,8 @@ async function startRedditAgent() {
             if (seenPosts.has(post.id)) continue
             
             // Check Supabase to see if we already processed this
-            const { data: existingJob } = await supabase.from('jobs').select('id').eq('user_id', USER_ID).eq('job_url', post.url).maybeSingle()
-            if (existingJob) {
+            const { data: existingJob } = await supabase.from('jobs').select('id').eq('user_id', USER_ID).eq('job_url', post.url).limit(1)
+            if (existingJob && existingJob.length > 0) {
                seenPosts.add(post.id)
                continue
             }

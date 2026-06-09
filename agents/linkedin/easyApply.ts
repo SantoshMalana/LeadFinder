@@ -118,12 +118,25 @@ export async function handleScreeningQuestion(
       }
       if (isChecked) continue
 
-      // Try to click "Yes" or default to first
-      const yesOption = await q.$('label:has-text("Yes"), input[value="Yes"]')
-      if (yesOption) {
-        await yesOption.click({ force: true }).catch(() => {})
-      } else {
-        await radioInputs[0].click({ force: true }).catch(() => {})
+      // Use AI for radio buttons as well, or skip. Blindly clicking "Yes" is dangerous.
+      try {
+        const payload = { job_id: jobId, question: questionText, user_id: userId }
+        const res = await fetch(`${API_BASE}/api/generate/answer`, {
+          method: 'POST',
+          headers: signRequest(payload),
+          body: JSON.stringify(payload),
+        })
+        if (!res.ok) throw new Error('AI answer API failed')
+        const data = await res.json()
+        if (data.answer) {
+          // Find radio option matching the answer (e.g. Yes/No)
+          const answerOption = await q.$(`label:text-is("${data.answer}"), input[value="${data.answer}"]`)
+          if (answerOption) {
+            await answerOption.click({ force: true }).catch(() => {})
+          }
+        }
+      } catch (err) {
+        console.log('⚠️ Failed to answer radio question via AI.')
       }
       continue
     }
@@ -255,6 +268,15 @@ export async function handleMultiStep(
 
     // No submit and no next — we're stuck
     console.log(`⚠️ Stuck at step ${step + 1}`)
+    
+    // Attempt to dismiss "Discard application?" modal if it popped up somehow
+    const discardBtn = await page.$('button:has-text("Discard")')
+    if (discardBtn) {
+      console.log('Dismissing Discard modal...')
+      await discardBtn.click()
+      await humanDelay(1000, 2000)
+    }
+
     await takeScreenshot(page, `stuck-step-${step}`)
     break
   }

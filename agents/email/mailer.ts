@@ -76,7 +76,7 @@ Return ONLY a valid JSON object in this exact format, with no markdown formattin
   throw new Error('Failed to generate email')
 }
 
-export async function sendColdEmail(userId: string, targetEmail: string, jobDesc: string) {
+export async function sendColdEmail(userId: string, targetEmail: string, jobId: string) {
   log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
   log(`📧 Gmail Agent Triggered for ${targetEmail}`)
   log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
@@ -93,16 +93,22 @@ export async function sendColdEmail(userId: string, targetEmail: string, jobDesc
     return
   }
 
-  // Check if we already emailed this address for this user
-  const { data: existing } = await supabase.from('jobs').select('id').eq('user_id', userId).eq('company', targetEmail).maybeSingle()
-  if (existing) {
-    log(`⚠️ Already sent an email to ${targetEmail}. Skipping to prevent spam.`)
+  // Fetch Job details to get the description
+  const { data: jobInfo } = await supabase.from('jobs').select('description, status').eq('id', jobId).single()
+  if (!jobInfo) {
+    log(`❌ Error: Job ${jobId} not found in database.`)
+    return
+  }
+
+  // Check if we already emailed
+  if (jobInfo.status === 'applied') {
+    log(`⚠️ Already sent an email to ${targetEmail} for this job. Skipping to prevent spam.`)
     return
   }
 
   // 2. Draft Email
   log(`🧠 Using Groq AI to draft the perfect cold email...`)
-  const draft = await generateColdEmail(profile.parsed_data, jobDesc)
+  const draft = await generateColdEmail(profile.parsed_data, jobInfo.description || 'Looking for a developer.')
   log(`✅ Draft complete. Subject: "${draft.subject}"`)
 
   // 3. Human Delay (Anti-Detect)
@@ -131,18 +137,11 @@ export async function sendColdEmail(userId: string, targetEmail: string, jobDesc
     })
     log(`🎯 SUCCESS! Email sent successfully to ${targetEmail}.`)
     
-    // Mark lead as applied in DB (Optional logic here)
-    await supabase.from('jobs').insert({
-      user_id: userId,
-      source: 'email',
-      source_id: `email_${Date.now()}`,
-      company: targetEmail,
-      title: 'Cold Email Application',
-      description: draft.body,
-      job_url: targetEmail,
+    // Mark lead as applied in DB (Update existing instead of duplicate insert)
+    await supabase.from('jobs').update({
       status: 'applied',
       applied_at: new Date().toISOString()
-    })
+    }).eq('id', jobId)
     
   } catch (error) {
     log(`🚨 Failed to send email: ${(error as any).message}`)
@@ -154,10 +153,10 @@ const isMain = typeof require !== 'undefined' && require.main === module;
 if (isMain) {
   const userId = process.argv[2]
   const targetEmail = process.argv[3]
-  const jobDesc = process.argv[4] || "Looking for a React developer to build a cool dashboard."
-  if (userId && targetEmail) {
-    sendColdEmail(userId, targetEmail, jobDesc)
+  const jobId = process.argv[4]
+  if (userId && targetEmail && jobId) {
+    sendColdEmail(userId, targetEmail, jobId)
   } else {
-    console.log("Usage: npx tsx agents/email/mailer.ts <userId> <targetEmail> <jobDescription>")
+    console.log("Usage: npx tsx agents/email/mailer.ts <userId> <targetEmail> <jobId>")
   }
 }

@@ -16,6 +16,8 @@ const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.
 
 // Map to keep track of running processes per user
 const activeAgents: Record<string, ChildProcess[]> = {}
+// Map to keep track of pending restart timeouts per user
+const pendingRestarts: Record<string, NodeJS.Timeout[]> = {}
 
 function startAgentsForUser(userId: string) {
   if (activeAgents[userId]) {
@@ -32,34 +34,48 @@ function startAgentsForUser(userId: string) {
     p.on('error', (err) => console.error(`[Daemon] ${name} error:`, err))
     p.on('exit', (code) => {
       console.log(`[Daemon] ${name} exited with code ${code}`)
-      if (code !== 0 && code !== null && activeAgents[userId] && activeAgents[userId].includes(p)) {
+      
+      // Prevent PID reuse by removing from active array immediately
+      if (activeAgents[userId]) {
+        activeAgents[userId] = activeAgents[userId].filter(proc => proc !== p)
+      }
+
+      if (code !== 0 && code !== null && activeAgents[userId]) {
         console.log(`[Daemon] Restarting crashed ${name} in 10s...`)
-        setTimeout(() => {
+        const timeoutId = setTimeout(() => {
           if (activeAgents[userId]) {
             const newP = spawnAgent(name, cmd, args)
             activeAgents[userId].push(newP)
           }
         }, 10000)
+        if (!pendingRestarts[userId]) pendingRestarts[userId] = []
+        pendingRestarts[userId].push(timeoutId)
       }
     })
     return p
   }
 
+  activeAgents[userId] = []
+  
   const linkedIn = spawnAgent('LinkedIn', 'npx', ['tsx', 'agents/runner.ts', userId])
-  processes.push(linkedIn)
+  activeAgents[userId].push(linkedIn)
 
   const reddit = spawnAgent('Reddit', 'npx', ['tsx', 'agents/reddit/bot.ts', userId])
-  processes.push(reddit)
+  activeAgents[userId].push(reddit)
 
   const pythonCmd = process.platform === 'win32' ? 'python' : 'python3'
   const telegram = spawnAgent('Telegram', pythonCmd, ['agents/telegram/scraper.py', userId])
-  processes.push(telegram)
+  activeAgents[userId].push(telegram)
 
-  activeAgents[userId] = processes
   console.log(`[Daemon] All 3 agents spawned for user ${userId}`)
 }
 
 function stopAgentsForUser(userId: string) {
+  if (pendingRestarts[userId]) {
+    for (const tid of pendingRestarts[userId]) clearTimeout(tid)
+    delete pendingRestarts[userId]
+  }
+
   const processes = activeAgents[userId]
   if (!processes) {
     console.log(`[Daemon] No active agents found to stop for user ${userId}`)

@@ -34,6 +34,7 @@ export async function sendDailySummary() {
       .from('jobs')
       .select('title, company, source')
       .gte('applied_at', todayIso)
+      .limit(100)
 
     if (err1) throw err1
 

@@ -73,35 +73,55 @@ Return JSON only:
   "summary": string
 }`
 
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.1,
-        })
-      })
+      let retries = 3
+      let analysis: any = null
 
-      if (!res.ok) throw new Error('Groq API Error')
+      while (retries > 0) {
+        try {
+          const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${GROQ_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: 'llama-3.3-70b-versatile',
+              messages: [{ role: 'user', content: prompt }],
+              temperature: 0.1,
+            })
+          })
 
-      const data = await res.json()
-      let content = data.choices?.[0]?.message?.content || ''
-      content = content.replace(/^```json/, '').replace(/```$/, '').trim()
-      const analysis = JSON.parse(content)
+          if (res.status === 429) {
+            retries--
+            if (retries === 0) throw new Error('Rate limited by Groq')
+            console.log(`⚠️ Rate limited by Groq. Retrying in 5s...`)
+            await new Promise(r => setTimeout(r, 5000))
+            continue
+          }
 
-      if (analysis.is_lead && analysis.score >= 5) {
+          if (!res.ok) throw new Error('Groq API Error')
+
+          const data = await res.json()
+          let content = data.choices?.[0]?.message?.content || ''
+          content = content.replace(/^```json/, '').replace(/```$/, '').trim()
+          analysis = JSON.parse(content)
+          break
+        } catch (err) {
+          if (retries === 1) throw err
+          retries--
+          await new Promise(r => setTimeout(r, 5000))
+        }
+      }
+
+      if (analysis && analysis.is_lead && analysis.score >= 5) {
         console.log(`🎯 Discord Lead Found! Score: ${analysis.score}/10`)
 
         // Check for duplicates
         const sourceId = `discord_${message.id}`
-        const { data: existing } = await supabase.from('jobs').select('id').eq('source_id', sourceId).maybeSingle()
+        const { data: existing } = await supabase.from('jobs').select('id').eq('source_id', sourceId).limit(1)
         
-        if (!existing) {
-          await supabase.from('jobs').insert({
+        if (!existing || existing.length === 0) {
+          const { data: insertedJob } = await supabase.from('jobs').insert({
             user_id: USER_ID,
             source: 'discord',
             source_id: sourceId,
@@ -114,19 +134,19 @@ Return JSON only:
             match_reason: analysis.summary,
             status: 'discovered',
             discovered_at: new Date().toISOString()
-          })
+          }).select('id').single()
 
           console.log(`✅ Saved Discord lead to DB`)
 
           // Auto-apply logic
-          if (analysis.apply_email) {
+          if (analysis.apply_email && insertedJob) {
             console.log(`✉️ Found email: ${analysis.apply_email}. Spawning mailer...`)
             const pythonCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx'
-            spawn(pythonCmd, ['tsx', 'agents/email/mailer.ts', USER_ID, analysis.apply_email, text.substring(0, 1000)], { stdio: 'ignore', detached: true }).unref()
+            spawn(pythonCmd, ['tsx', 'agents/email/mailer.ts', USER_ID, analysis.apply_email, insertedJob.id], { stdio: 'ignore', detached: true }).unref()
           } else if (analysis.apply_link && (analysis.apply_link.includes('forms.gle') || analysis.apply_link.includes('google.com/forms'))) {
-            console.log(`🔗 Found Google Form. Spawning form filler...`)
+            console.log(`📝 Found Google Form. Spawning form filler...`)
             const pythonCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx'
-            spawn(pythonCmd, ['tsx', 'agents/forms/googleForms.ts', USER_ID, analysis.apply_link], { stdio: 'ignore', detached: true }).unref()
+            spawn(pythonCmd, ['tsx', 'agents/forms/googleForms.ts', USER_ID, analysis.apply_link, insertedJob?.id || ''], { stdio: 'ignore', detached: true }).unref()
           }
         }
       }

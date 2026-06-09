@@ -34,8 +34,8 @@ export async function checkUpworkRSS() {
       if (!jobId) continue
 
       // Check for duplicates
-      const { data: existing } = await supabase.from('jobs').select('id').eq('source_id', `upwork_${jobId}`).maybeSingle()
-      if (existing) continue
+      const { data: existing } = await supabase.from('jobs').select('id').eq('source_id', `upwork_${jobId}`).limit(1)
+      if (existing && existing.length > 0) continue
 
       console.log(`🔎 Analyzing new Upwork job: "${item.title}"`)
 
@@ -48,26 +48,39 @@ Return ONLY the text of the proposal. Keep it short, focused on results, and sta
 
       let proposalDraft = ''
 
-      try {
-        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${GROQ_API_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: 'llama-3.3-70b-versatile',
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 0.3,
+      let retries = 3
+      while (retries > 0) {
+        try {
+          const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${GROQ_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: 'llama-3.3-70b-versatile',
+              messages: [{ role: 'user', content: prompt }],
+              temperature: 0.3,
+            })
           })
-        })
 
-        if (res.ok) {
-          const data = await res.json()
-          proposalDraft = data.choices?.[0]?.message?.content?.trim() || ''
+          if (res.status === 429) {
+            retries--
+            if (retries === 0) break
+            console.log(`⚠️ Rate limited by Groq. Retrying in 5s...`)
+            await new Promise(r => setTimeout(r, 5000))
+            continue
+          }
+
+          if (res.ok) {
+            const data = await res.json()
+            proposalDraft = data.choices?.[0]?.message?.content?.trim() || ''
+          }
+          break
+        } catch (e) {
+          console.error('⚠️ Failed to generate Upwork proposal')
+          break
         }
-      } catch (e) {
-        console.error('⚠️ Failed to generate Upwork proposal')
       }
 
       await supabase.from('jobs').insert({
