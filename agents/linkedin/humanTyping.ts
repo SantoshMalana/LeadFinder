@@ -41,7 +41,8 @@ export async function humanTypeText(page: Page, selector: string, text: string, 
   if (!el) return
   
   await el.click()
-  // Ensure we focus and clear current field content if any (optional, but standard usually)
+  // Triple-click to select all existing content so new text replaces it
+  await el.click({ clickCount: 3 })
   await new Promise(r => setTimeout(r, 100 + Math.random() * 200))
 
   for (let i = 0; i < text.length; i++) {

@@ -29,21 +29,32 @@ const UA_POOL = [
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
 ]
 
+const LOCALE_POOL = [
+  { timezone: 'America/New_York',    geo: { latitude: 40.7128, longitude: -74.0060 }, locale: 'en-US' },
+  { timezone: 'America/Chicago',     geo: { latitude: 41.8781, longitude: -87.6298 }, locale: 'en-US' },
+  { timezone: 'America/Los_Angeles', geo: { latitude: 34.0522, longitude: -118.2437 }, locale: 'en-US' },
+  { timezone: 'America/Denver',      geo: { latitude: 39.7392, longitude: -104.9903 }, locale: 'en-US' },
+  { timezone: 'Europe/London',       geo: { latitude: 51.5074, longitude: -0.1278 }, locale: 'en-GB' },
+  { timezone: 'Asia/Kolkata',        geo: { latitude: 19.0760, longitude: 72.8777 }, locale: 'en-IN' },
+]
+
 export function generateFingerprint(sessionSeed?: string): BrowserFingerprint {
   const seed = sessionSeed || crypto.randomBytes(16).toString('hex')
   const hash = crypto.createHash('sha256').update(seed).digest('hex')
   const idx = (n: number, max: number) => parseInt(hash.slice(n * 2, n * 2 + 2), 16) % max
 
+  const localeEntry = LOCALE_POOL[idx(2, LOCALE_POOL.length)]
+
   return {
     viewport: VIEWPORT_POOL[idx(0, VIEWPORT_POOL.length)],
     userAgent: UA_POOL[idx(1, UA_POOL.length)],
-    locale: 'en-US',
-    timezone: 'America/New_York',
+    locale: localeEntry.locale,
+    timezone: localeEntry.timezone,
     geolocation: {
-      latitude: 40.7128 + (Math.random() - 0.5) * 0.01,
-      longitude: -74.006 + (Math.random() - 0.5) * 0.01,
+      latitude: localeEntry.geo.latitude + (Math.random() - 0.5) * 0.01,
+      longitude: localeEntry.geo.longitude + (Math.random() - 0.5) * 0.01,
     },
-    acceptLanguage: 'en-US,en;q=0.9',
+    acceptLanguage: `${localeEntry.locale},en;q=0.9`,
     secChUa: '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
     platform: '"Windows"',
     canvasNoise: parseInt(hash.slice(4, 8), 16) % 10,

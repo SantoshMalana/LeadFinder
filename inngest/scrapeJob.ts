@@ -37,17 +37,19 @@ export const scrapeJob = inngest.createFunction(
           campaign.keywords || []
         )
 
-        for (const post of posts) {
-          await supabase.from('leads').insert({
-            campaign_id: campaign.id,
-            platform: post.platform,
-            post_id: post.post_id,
-            post_title: post.post_title,
-            post_body: post.post_body,
-            post_url: post.post_url,
-            author: post.author,
-            status: 'new',
-          })
+        if (posts.length > 0) {
+          await supabase.from('leads').insert(
+            posts.map(post => ({
+              campaign_id: campaign.id,
+              platform: post.platform,
+              post_id: post.post_id,
+              post_title: post.post_title,
+              post_body: post.post_body,
+              post_url: post.post_url,
+              author: post.author,
+              status: 'new',
+            }))
+          )
         }
 
         console.log(`✅ Saved ${posts.length} leads for campaign: ${campaign.name}`)

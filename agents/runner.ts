@@ -51,7 +51,24 @@ export async function startAutoApply(config: AgentConfig) {
   console.log(`   Roles: ${config.roles.join(', ')}`)
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n')
 
+  // Query how many applications were already made today (survives crash + restart)
   let appliedCount = 0
+  try {
+    const { createClient } = await import('@supabase/supabase-js')
+    const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
+    const todayStart = new Date()
+    todayStart.setHours(0, 0, 0, 0)
+    const { count } = await sb
+      .from('jobs')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', config.user_id)
+      .eq('status', 'applied')
+      .gte('applied_at', todayStart.toISOString())
+    appliedCount = count || 0
+    if (appliedCount > 0) {
+      console.log(`📊 Resuming session: ${appliedCount} applications already made today`)
+    }
+  } catch { /* fall back to 0 */ }
   let actionsCount = 0
 
   try {
