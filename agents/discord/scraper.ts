@@ -6,10 +6,11 @@ import { spawn } from 'child_process'
 
 dotenv.config({ path: path.join(process.cwd(), '.env.local') })
 
+import { getRandomGroqKey } from '../../lib/aiKeys'
+
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN || ''
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
-const GROQ_API_KEY = process.env.GROQ_API_KEY || ''
 const USER_ID = process.argv[2] || process.env.AUTOAPPLY_USER_ID || ''
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
@@ -81,7 +82,7 @@ Return JSON only:
           const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${GROQ_API_KEY}`,
+              'Authorization': `Bearer ${getRandomGroqKey()}`,
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({

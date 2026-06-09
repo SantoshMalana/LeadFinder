@@ -1,9 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { createClient } from '@supabase/supabase-js'
+import { createClient as createAuthClient } from '@/lib/supabase/server'
+import { getRandomGeminiKey } from '@/lib/aiKeys'
 
 export async function POST(req: NextRequest) {
   try {
+    const authClient = await createAuthClient()
+    const { data: { user } } = await authClient.auth.getUser()
+
+    if (!user) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+    }
+
     const { lead_id } = await req.json()
 
     const supabase = createClient(
@@ -13,22 +22,22 @@ export async function POST(req: NextRequest) {
 
     const { data: lead } = await supabase
       .from('leads')
-      .select('*')
+      .select('*, campaigns!inner(user_id)')
       .eq('id', lead_id)
+      .eq('campaigns.user_id', user.id)
       .single()
 
     if (!lead) {
-      return NextResponse.json({ error: 'Lead not found' }, { status: 404 })
+      return NextResponse.json({ error: 'Lead not found or access denied' }, { status: 404 })
     }
 
-    const { data: users } = await supabase
+    const { data: profile } = await supabase
       .from('users')
       .select('id, voice_profile, portfolio_summary')
-      .limit(1)
+      .eq('id', user.id)
+      .single()
 
-    const profile = users?.[0]
-
-    const gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
+    const gemini = new GoogleGenerativeAI(getRandomGeminiKey() || process.env.GEMINI_API_KEY!)
     const model = gemini.getGenerativeModel({ model: 'gemini-2.5-flash' })
 
     const result = await model.generateContent(`
@@ -52,7 +61,7 @@ Reply only, nothing else.`)
 
     await supabase.from('outreach_log').insert({
       lead_id,
-      user_id: users?.[0]?.id || null,
+      user_id: user.id,
       generated_reply: reply,
       sent: false,
     })

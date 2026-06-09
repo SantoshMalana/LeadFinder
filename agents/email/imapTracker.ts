@@ -48,25 +48,38 @@ export async function checkInboxForReplies() {
 
       if (!fromAddress) continue
 
-      // Check if this sender exists in our Supabase jobs as a cold email lead
+      // Extract domain from the sender address (e.g. recruiter@google.com → google.com)
+      const domain = fromAddress.split('@')[1]
+      if (!domain) continue
+
+      // Match against reply_to_email column stored during job insert
       const { data: leads } = await supabase
         .from('jobs')
         .select('id, user_id, title, company, status')
         .eq('source', 'email')
-        .ilike('company', `%${fromAddress}%`) // In mailer.ts, we used targetEmail as company
+        .eq('reply_to_email', fromAddress) // exact match first
         .limit(1)
 
-      if (leads && leads.length > 0) {
-        const lead = leads[0]
-        console.log(`🎉 [IMAP] Match found! Recruiter ${fromAddress} replied to "${lead.title}".`)
+      // Fallback: match by domain if no exact match
+      const { data: domainLeads } = !leads?.length ? await supabase
+        .from('jobs')
+        .select('id, user_id, title, company, status')
+        .eq('source', 'email')
+        .ilike('reply_to_email', `%@${domain}`)
+        .limit(1) : { data: null }
+
+      const matchedLead = leads?.[0] || domainLeads?.[0]
+
+      if (matchedLead) {
+        console.log(`🎉 [IMAP] Match found! Recruiter ${fromAddress} replied to "${matchedLead.title}".`)
         
-        // Update job status to 'interview_requested'
+        // Update job status to valid enum value 'interview'
         await supabase
           .from('jobs')
-          .update({ status: 'interview_requested', updated_at: new Date().toISOString() })
-          .eq('id', lead.id)
+          .update({ status: 'interview', updated_at: new Date().toISOString() })
+          .eq('id', matchedLead.id)
 
-        console.log(`   ✅ Status updated in dashboard.`)
+        console.log(`   ✅ Status updated to 'interview' in dashboard.`)
         
         // Mark as read so we don't process it again
         await connection.addFlags(item.attributes.uid, '\\Seen')

@@ -9,19 +9,16 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url)
     const type = searchParams.get('type') || 'agent'
     const limit = parseInt(searchParams.get('limit') || '50')
-    const userId = searchParams.get('user_id')
-
-    if (!userId) {
-      return NextResponse.json({ error: 'user_id is required' }, { status: 400 })
-    }
 
     const authClient = await createAuthClient()
     const { data: { user } } = await authClient.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     
+    const userId = user.id
+
     // Connect to Upstash Redis
     const redis = Redis.fromEnv()
-    const listKey = type === 'telegram' ? 'telegram_logs' : 'agent_logs'
+    const listKey = type === 'telegram' ? `telegram_logs:${userId}` : `agent_logs:${userId}`
     const logs = await redis.lrange(listKey, 0, limit - 1)
     const reversed = [...logs].reverse().map(l => typeof l === 'string' ? l : JSON.stringify(l)).join('\n')
 

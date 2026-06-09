@@ -1,5 +1,5 @@
 import { inngest } from './client'
-import { groq } from '@/lib/groq'
+import { scoreLeadPost } from '@/lib/scoring'
 import { createClient } from '@supabase/supabase-js'
 
 export const scoreJob = inngest.createFunction(
@@ -26,46 +26,42 @@ export const scoreJob = inngest.createFunction(
       return { message: 'No unscored leads' }
     }
 
-    for (const lead of leads) {
-      await step.run(`score-lead-${lead.id}`, async () => {
-        const prompt = `You are a lead scoring AI for a freelance full-stack developer.
-
-Score this post 1-10 for hiring/buying intent.
-9-10: Direct hire. "Need React dev", "hiring freelancer", "looking for developer"
-7-8: Strong implied. "Need a website", "freelancer recommendations?"
-4-6: Tangential. Tech discussion without clear hiring need
-1-3: Not a lead. News, opinions, memes
-
-Post Title: ${lead.post_title}
-Post Body: ${lead.post_body?.slice(0, 500) || 'No body'}
-
-JSON only: {"score": 8, "reason": "one sentence explanation"}`
-
-        const res = await groq.chat.completions.create({
-          model: 'llama-3.3-70b-versatile',
-          messages: [{ role: 'user', content: prompt }],
-          response_format: { type: 'json_object' },
-          temperature: 0.1,
+    // Score all leads in parallel via canonical scoreLeadPost
+    const scored = await step.run('score-all-leads', async () => {
+      return Promise.all(
+        leads.map(async (lead) => {
+          const { score, reason } = await scoreLeadPost({
+            post_title: lead.post_title,
+            post_body: lead.post_body,
+          })
+          return { lead, score, reason }
         })
+      )
+    })
 
-        const content = res.choices[0].message.content || '{}'
-        const { score, reason } = JSON.parse(content)
+    // Separate into updates and deletes
+    const toUpdate = scored.filter(({ lead, score }) => score >= (lead.campaigns?.min_score ?? 7))
+    const toDelete = scored.filter(({ lead, score }) => score < (lead.campaigns?.min_score ?? 7))
 
-        console.log(`Lead: "${lead.post_title.slice(0, 40)}" → Score: ${score}`)
-
-        const minScore = lead.campaigns?.min_score ?? 7
-
-        if (score >= minScore) {
-          await supabase
-            .from('leads')
-            .update({ score, score_reason: reason })
-            .eq('id', lead.id)
-        } else {
-          await supabase.from('leads').delete().eq('id', lead.id)
-        }
-
-        return { score, reason }
+    // Batch update
+    if (toUpdate.length > 0) {
+      await step.run('batch-update-leads', async () => {
+        return Promise.all(
+          toUpdate.map(({ lead, score, reason }) =>
+            supabase.from('leads').update({ score, score_reason: reason }).eq('id', lead.id)
+          )
+        )
       })
     }
+
+    // Batch delete
+    if (toDelete.length > 0) {
+      const deleteIds = toDelete.map(({ lead }) => lead.id)
+      await step.run('batch-delete-leads', async () => {
+        return supabase.from('leads').delete().in('id', deleteIds)
+      })
+    }
+
+    return { updated: toUpdate.length, deleted: toDelete.length }
   }
 )

@@ -5,9 +5,11 @@ import * as path from 'path'
 
 dotenv.config({ path: path.join(process.cwd(), '.env.local') })
 
+import { getRandomGroqKey } from '../../lib/aiKeys'
+import { scoreJobMatch } from '../../lib/scoring'
+
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
-const GROQ_API_KEY = process.env.GROQ_API_KEY || ''
 const USER_ID = process.argv[2] || process.env.AUTOAPPLY_USER_ID || ''
 
 // For Upwork, you can generate an RSS feed based on your search query on the site.
@@ -54,7 +56,7 @@ Return ONLY the text of the proposal. Keep it short, focused on results, and sta
           const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${GROQ_API_KEY}`,
+              'Authorization': `Bearer ${getRandomGroqKey()}`,
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
@@ -83,6 +85,36 @@ Return ONLY the text of the proposal. Keep it short, focused on results, and sta
         }
       }
 
+      // Fetch user profile to score against their CV
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('parsed_data')
+        .eq('user_id', USER_ID)
+        .single()
+
+      let matchScore = 5
+      let matchReason = 'Matched Upwork RSS search'
+
+      if (profile?.parsed_data) {
+        const result = await scoreJobMatch(
+          {
+            title: item.title || 'Upwork Job',
+            company: 'Upwork Client',
+            description: item.contentSnippet || item.content || '',
+            job_type: 'freelance',
+          },
+          profile.parsed_data
+        )
+        matchScore = result.score
+        matchReason = result.reason
+
+        // Skip low matches (below threshold of 6)
+        if (!result.should_apply) {
+          console.log(`⏭️  Skipping low-match Upwork job: "${item.title}" (score: ${matchScore})`)
+          continue
+        }
+      }
+
       await supabase.from('jobs').insert({
         user_id: USER_ID,
         source: 'upwork',
@@ -92,14 +124,14 @@ Return ONLY the text of the proposal. Keep it short, focused on results, and sta
         description: item.contentSnippet || item.content || '',
         job_url: item.link || '',
         job_type: 'freelance',
-        match_score: 8, // Assume high if it matched RSS
-        match_reason: 'Matched Upwork RSS search',
-        status: 'discovered', // We don't auto-apply on Upwork yet, just save draft
-        discovered_at: new Date().toISOString()
-        // Save proposalDraft somewhere, maybe append to description or metadata
+        match_score: matchScore,
+        match_reason: matchReason,
+        status: 'discovered',
+        discovered_at: new Date().toISOString(),
+        metadata: { proposal_draft: proposalDraft },
       })
 
-      console.log(`✅ Saved Upwork job and proposal draft to DB!`)
+      console.log(`✅ Saved Upwork job (score: ${matchScore}/10) and proposal draft to DB!`)
     }
 
   } catch (error) {

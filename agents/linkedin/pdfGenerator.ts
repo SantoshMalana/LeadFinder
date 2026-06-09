@@ -3,9 +3,9 @@ import * as fs from 'fs'
 import PDFDocument from 'pdfkit'
 import type { ParsedCV } from '../../types'
 import * as dotenv from 'dotenv'
+import { getRandomGroqKey } from '../../lib/aiKeys'
 
 dotenv.config({ path: path.join(process.cwd(), '.env.local') })
-const GROQ_API_KEY = process.env.GROQ_API_KEY || ''
 
 export async function generateCoverLetter(profile: ParsedCV, jobDetails: string): Promise<string> {
   console.log('🧠 Using Groq AI to draft PDF cover letter...')
@@ -30,7 +30,7 @@ Return ONLY the text of the cover letter. No markdown formatting, no placeholder
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${GROQ_API_KEY}`,
+        'Authorization': `Bearer ${getRandomGroqKey()}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({

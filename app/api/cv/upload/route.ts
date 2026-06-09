@@ -5,14 +5,10 @@ import { extractTextFromPDF } from '@/lib/cv-parser'
 
 export async function POST(req: NextRequest) {
   try {
-    // Authenticate user via cookies first, fall back to header for agent calls
-    let userId = req.headers.get('x-user-id')
-    if (!userId) {
-      const authClient = await createAuthClient()
-      const { data: { user } } = await authClient.auth.getUser()
-      if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
-      userId = user.id
-    }
+    const authClient = await createAuthClient()
+    const { data: { user } } = await authClient.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+    const userId = user.id
 
     const formData = await req.formData()
     const file = formData.get('cv') as File | null

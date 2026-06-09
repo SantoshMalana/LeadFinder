@@ -14,13 +14,16 @@ import { Redis } from '@upstash/redis'
 const originalLog = console.log
 const redis = Redis.fromEnv()
 
+const USER_ID = process.argv[2] || process.env.AUTOAPPLY_USER_ID || 'global'
+const logKey = `agent_logs:${USER_ID}`
+
 console.log = (...args) => {
   const msg = args.join(' ')
   const line = `[${new Date().toLocaleTimeString()}] ${msg}`
   
   // Stream to Redis in background
-  redis.lpush('agent_logs', line).catch(() => {})
-  redis.ltrim('agent_logs', 0, 100).catch(() => {})
+  redis.lpush(logKey, line).catch(() => {})
+  redis.ltrim(logKey, 0, 100).catch(() => {})
   
   originalLog(...args)
 }
@@ -230,7 +233,16 @@ async function updateJobStatus(jobId: string, status: string, failureReason?: st
 
 async function logAction(jobId: string, action: string, details: Record<string, unknown>) {
   try {
-    // Direct Supabase call would be better here, but keeping it simple for now
+    const supabase = (await import('@supabase/supabase-js')).createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
+    
+    await supabase.from('application_log').insert({
+      job_id: jobId,
+      action: action,
+      details: details,
+    })
     console.log(`📝 Log: ${action} for job ${jobId.slice(0, 8)}...`)
   } catch {}
 }

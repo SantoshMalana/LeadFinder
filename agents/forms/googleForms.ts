@@ -6,9 +6,12 @@ import { Redis } from '@upstash/redis'
 
 dotenv.config({ path: path.join(process.cwd(), '.env.local') })
 
+import { getRandomGroqKey } from '../../lib/aiKeys'
+
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
-const GROQ_API_KEY = process.env.GROQ_API_KEY!
+
+const USER_ID = process.argv[2] || process.env.AUTOAPPLY_USER_ID || 'global'
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 const redis = Redis.fromEnv()
@@ -16,8 +19,8 @@ const redis = Redis.fromEnv()
 function log(msg: string) {
   const line = `[${new Date().toLocaleTimeString()}] ${msg}`
   console.log(line)
-  redis.lpush('agent_logs', line).catch(() => {})
-  redis.ltrim('agent_logs', 0, 100).catch(() => {})
+  redis.lpush(`agent_logs:${USER_ID}`, line).catch(() => {})
+  redis.ltrim(`agent_logs:${USER_ID}`, 0, 100).catch(() => {})
 }
 
 import { ParsedCV } from '../../types'
@@ -58,7 +61,7 @@ Return ONLY a valid JSON object where the keys are the EXACT question strings, a
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Authorization': `Bearer ${getRandomGroqKey()}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({

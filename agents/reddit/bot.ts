@@ -7,10 +7,10 @@ dotenv.config({ path: path.join(process.cwd(), '.env.local') })
 
 import { createClient } from '@supabase/supabase-js'
 import { Redis } from '@upstash/redis'
+import { getRandomGroqKey } from '../../lib/aiKeys'
 
 const REDDIT_USER = process.env.REDDIT_USERNAME || ''
 const REDDIT_PASS = process.env.REDDIT_PASSWORD || ''
-const GROQ_API_KEY = process.env.GROQ_API_KEY || ''
 const USER_ID = process.argv[2] || process.env.AUTOAPPLY_USER_ID || ''
 
 let redis: Redis
@@ -26,8 +26,8 @@ function log(msg: string) {
   const line = `[${new Date().toLocaleTimeString()}] ${msg}`
   console.log(line)
   if (redis) {
-    redis.lpush('agent_logs', line).catch(() => {})
-    redis.ltrim('agent_logs', 0, 100).catch(() => {})
+    redis.lpush(`agent_logs:${USER_ID}`, line).catch(() => {})
+    redis.ltrim(`agent_logs:${USER_ID}`, 0, 100).catch(() => {})
   }
 }
 
@@ -38,6 +38,13 @@ if (!REDDIT_USER || !REDDIT_PASS || !USER_ID) {
 
 const SUBREDDITS = ['forhire', 'freelance', 'reactjs']
 const KEYWORDS = ['hiring', 'looking for', 'need a', 'developer', 'react', 'nextjs', 'full stack']
+
+// Circuit breaker — prevents rapid comments that trigger spam filters
+const COMMENT_COOLDOWN_MS = 10 * 60 * 1000  // 10 minutes min between comments
+const MAX_COMMENTS_PER_SESSION = 5           // Max 5 comments per run
+const MIN_KARMA_TO_COMMENT = 1               // Safety floor (account must have at least some karma)
+let lastCommentAt = 0
+let sessionCommentCount = 0
 
 async function scoreLeadWithAI(postText: string): Promise<any> {
   const prompt = `Analyze this Reddit post and determine if it's someone hiring a freelance developer.
@@ -59,7 +66,7 @@ Return JSON only:
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Authorization': `Bearer ${getRandomGroqKey()}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -166,6 +173,20 @@ async function startRedditAgent() {
               log(`   📌 ${analysis.summary}`)
               
               // Try to comment
+              // ─── Circuit Breaker Check ───────────────────────────────
+              const msSinceLastComment = Date.now() - lastCommentAt
+              if (msSinceLastComment < COMMENT_COOLDOWN_MS) {
+                const waitSec = Math.round((COMMENT_COOLDOWN_MS - msSinceLastComment) / 1000)
+                log(`⏳ Rate limit: waiting ${waitSec}s before next comment...`)
+                await new Promise(r => setTimeout(r, COMMENT_COOLDOWN_MS - msSinceLastComment))
+              }
+
+              if (sessionCommentCount >= MAX_COMMENTS_PER_SESSION) {
+                log(`🛑 Session comment cap (${MAX_COMMENTS_PER_SESSION}) reached. Skipping further replies this run.`)
+                break
+              }
+              // ─────────────────────────────────────────────────────────
+
               try {
                 log(`   ✍️ Writing reply...`)
                 const commentBox = await page.$('shreddit-composer div[contenteditable="true"], div[contenteditable="true"][role="textbox"]')
@@ -173,9 +194,13 @@ async function startRedditAgent() {
                   await commentBox.click()
                   await page.keyboard.type(analysis.reply_draft, { delay: 50 })
                   const submitBtn = await page.$('button[type="submit"]:has-text("Comment"), shreddit-composer button[slot="submit-button"]')
-                  if (submitBtn) await submitBtn.click()
-                  log(`   ✅ Automatically replied to thread!`)
-                  
+                  if (submitBtn) {
+                    await submitBtn.click()
+                    lastCommentAt = Date.now()
+                    sessionCommentCount++
+                    log(`   ✅ Replied! (${sessionCommentCount}/${MAX_COMMENTS_PER_SESSION} this session)`)
+                  }
+
                   await supabase.from('jobs').insert({
                     user_id: USER_ID,
                     source: 'reddit',

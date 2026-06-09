@@ -1,10 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { generateCoverLetter } from '@/lib/cover-letter'
+import { verifyRequest } from '@/lib/sign'
 
 export async function POST(req: NextRequest) {
   try {
-    const { job_id, persona } = await req.json()
+    const apiKey = req.headers.get('x-api-key')
+    const hmacTimestamp = req.headers.get('X-Timestamp') || ''
+    const hmacSig = req.headers.get('X-Signature') || ''
+
+    const body = await req.text()
+    const hasLegacyKey = apiKey === process.env.INTERNAL_API_KEY
+    const hasValidHmac = hmacTimestamp && hmacSig && verifyRequest(body, hmacTimestamp, hmacSig)
+
+    if (!hasLegacyKey && !hasValidHmac) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const { job_id, persona } = JSON.parse(body)
 
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,

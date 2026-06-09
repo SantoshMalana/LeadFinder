@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { scrapeAllSubreddits, DEFAULT_SUBREDDITS } from '@/scrapers/reddit'
-import { groq } from '@/lib/groq'
+import { scoreLeadPost } from '@/lib/scoring'
 import type { Campaign } from '@/types'
 
 interface RawPost {
@@ -13,34 +13,7 @@ interface RawPost {
   platform: string
 }
 
-async function scorePost(post: RawPost): Promise<{ score: number; reason: string }> {
-  try {
-    const res = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{
-        role: 'user',
-        content: `Score this Reddit post 1-10 for freelance/hiring intent.
-9-10: Direct hire. "Need React dev", "hiring freelancer"
-7-8: Strong implied. "Need a website", "looking for developer"
-4-6: Tangential
-1-3: Not a lead
 
-Post: ${post.post_title}
-${post.post_body?.slice(0, 200) || ''}
-
-JSON only: {"score": 8, "reason": "one sentence"}`,
-      }],
-      response_format: { type: 'json_object' },
-      temperature: 0.1,
-      max_tokens: 60,
-    })
-
-    const { score, reason } = JSON.parse(res.choices[0].message.content || '{}')
-    return { score: Number(score) || 0, reason: reason || '' }
-  } catch {
-    return { score: 0, reason: 'scoring failed' }
-  }
-}
 
 async function processCampaign(
   campaign: Campaign,
@@ -55,7 +28,7 @@ async function processCampaign(
   // Score ALL posts in parallel — Groq is fast enough, no need for batching waterfall
   const scored = await Promise.all(
     posts.map(async post => {
-      const { score, reason } = await scorePost(post)
+      const { score, reason } = await scoreLeadPost(post)
       return { post, score, reason }
     })
   )

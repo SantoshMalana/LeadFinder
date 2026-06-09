@@ -6,9 +6,10 @@ import { Redis } from '@upstash/redis'
 
 dotenv.config({ path: path.join(process.cwd(), '.env.local') })
 
+import { getRandomGroqKey } from '../../lib/aiKeys'
+
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
-const GROQ_API_KEY = process.env.GROQ_API_KEY!
 const GMAIL_USER = process.env.GMAIL_USER!
 const GMAIL_PASS = process.env.GMAIL_APP_PASSWORD!
 
@@ -18,8 +19,9 @@ const redis = Redis.fromEnv()
 function log(msg: string) {
   const line = `[${new Date().toLocaleTimeString()}] ${msg}`
   console.log(line)
-  redis.lpush('agent_logs', line).catch(() => {})
-  redis.ltrim('agent_logs', 0, 100).catch(() => {})
+  const userId = process.argv[2] || process.env.AUTOAPPLY_USER_ID || 'global'
+  redis.lpush(`agent_logs:${userId}`, line).catch(() => {})
+  redis.ltrim(`agent_logs:${userId}`, 0, 100).catch(() => {})
 }
 import { ParsedCV } from '../../types'
 
@@ -55,7 +57,7 @@ Return ONLY a valid JSON object in this exact format, with no markdown formattin
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Authorization': `Bearer ${getRandomGroqKey()}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -137,10 +139,11 @@ export async function sendColdEmail(userId: string, targetEmail: string, jobId: 
     })
     log(`🎯 SUCCESS! Email sent successfully to ${targetEmail}.`)
     
-    // Mark lead as applied in DB (Update existing instead of duplicate insert)
+    // Mark lead as applied in DB — also store reply_to_email so IMAP tracker can match
     await supabase.from('jobs').update({
       status: 'applied',
-      applied_at: new Date().toISOString()
+      applied_at: new Date().toISOString(),
+      reply_to_email: targetEmail,
     }).eq('id', jobId)
     
   } catch (error) {

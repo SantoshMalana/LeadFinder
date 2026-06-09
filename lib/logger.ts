@@ -20,21 +20,22 @@ export function scrubPII(text: string): string {
   return scrubbed
 }
 
-export function createLogger(namespace: string) {
+export function createLogger(namespace: string, userId?: string) {
+  const logKey = userId ? `agent_logs:${userId}` : 'agent_logs'
   return {
     info: (msg: string, ...args: unknown[]) => {
       const cleanArgs = args.length > 0 ? ' ' + scrubPII(JSON.stringify(args)) : ''
       const cleanMsg = scrubPII(`[${namespace}] ${msg}${cleanArgs}`)
       const line = `[${new Date().toLocaleTimeString()}] ${cleanMsg}`
       console.log(line)
-      redis.lpush('agent_logs', line).catch(() => {})
-      redis.ltrim('agent_logs', 0, 200).catch(() => {})
+      redis.lpush(logKey, line).catch(() => {})
+      redis.ltrim(logKey, 0, 200).catch(() => {})
     },
     error: (msg: string, err?: unknown) => {
       const errMsg = err instanceof Error ? err.message : String(err)
       const clean = scrubPII(`[${namespace}] ERROR: ${msg} — ${errMsg}`)
       console.error(clean)
-      redis.lpush('agent_logs', `[${new Date().toLocaleTimeString()}] ${clean}`).catch(() => {})
+      redis.lpush(logKey, `[${new Date().toLocaleTimeString()}] ${clean}`).catch(() => {})
     },
     warn: (msg: string) => {
       const clean = scrubPII(`[${namespace}] WARN: ${msg}`)

@@ -59,8 +59,8 @@ import httpx
 def _push_log_to_redis(line: str):
     if not UPSTASH_REDIS_REST_URL or not UPSTASH_REDIS_REST_TOKEN: return
     try:
-        url = f"{UPSTASH_REDIS_REST_URL}/lpush/telegram_logs"
-        trim_url = f"{UPSTASH_REDIS_REST_URL}/ltrim/telegram_logs/0/100"
+        url = f"{UPSTASH_REDIS_REST_URL}/lpush/telegram_logs:{USER_ID}"
+        trim_url = f"{UPSTASH_REDIS_REST_URL}/ltrim/telegram_logs:{USER_ID}/0/100"
         headers = {"Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}"}
         
         with httpx.Client() as client:
