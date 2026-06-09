@@ -108,47 +108,61 @@ export async function sendColdEmail(userId: string, targetEmail: string, jobId: 
     return
   }
 
+  // Check if draft exists
+  const draftKey = `email_draft:${userId}:${jobId}`
+  const existingDraftRaw = await redis.get<string>(draftKey)
+
+  if (existingDraftRaw) {
+    const draft = typeof existingDraftRaw === 'string' ? JSON.parse(existingDraftRaw) : existingDraftRaw
+    
+    // 4. Send Email
+    log(`🚀 Sending scheduled email to ${targetEmail} from ${GMAIL_USER}...`)
+    
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: GMAIL_USER,
+        pass: GMAIL_PASS,
+      },
+    })
+
+    try {
+      await transporter.sendMail({
+        from: `"${profile.parsed_data.name}" <${GMAIL_USER}>`,
+        to: targetEmail,
+        subject: draft.subject,
+        text: draft.body,
+      })
+      log(`🎯 SUCCESS! Email sent successfully to ${targetEmail}.`)
+      
+      // Mark lead as applied in DB — also store reply_to_email so IMAP tracker can match
+      await supabase.from('jobs').update({
+        status: 'applied',
+        applied_at: new Date().toISOString(),
+        reply_to_email: targetEmail,
+      }).eq('id', jobId)
+      
+      await redis.del(draftKey)
+    } catch (error) {
+      log(`🚨 Failed to send email: ${(error as any).message}`)
+    }
+    return
+  }
+
   // 2. Draft Email
   log(`🧠 Using Groq AI to draft the perfect cold email...`)
   const draft = await generateColdEmail(profile.parsed_data, jobInfo.description || 'Looking for a developer.')
   log(`✅ Draft complete. Subject: "${draft.subject}"`)
 
-  // 3. Human Delay (Anti-Detect)
-  // Random delay between 3 and 15 mins (production logic)
+  // 3. Human Delay (Anti-Detect) — Schedule via Redis instead of blocking
   const delayMs = Math.floor(Math.random() * (900000 - 180000 + 1) + 180000)
-  log(`⏳ Simulating human drafting... waiting ${Math.round(delayMs/1000)} seconds before sending.`)
-  await new Promise(res => setTimeout(res, delayMs))
+  log(`⏳ Simulating human drafting... scheduling for ${Math.round(delayMs/1000)} seconds from now.`)
 
-  // 4. Send Email
-  log(`🚀 Sending email to ${targetEmail} from ${GMAIL_USER}...`)
-  
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: GMAIL_USER,
-      pass: GMAIL_PASS,
-    },
+  await redis.set(draftKey, JSON.stringify(draft), { px: delayMs + 3600000 })
+  await redis.zadd('scheduled_emails', {
+    score: Date.now() + delayMs,
+    member: JSON.stringify({ userId, targetEmail, jobId })
   })
-
-  try {
-    await transporter.sendMail({
-      from: `"${profile.parsed_data.name}" <${GMAIL_USER}>`,
-      to: targetEmail,
-      subject: draft.subject,
-      text: draft.body,
-    })
-    log(`🎯 SUCCESS! Email sent successfully to ${targetEmail}.`)
-    
-    // Mark lead as applied in DB — also store reply_to_email so IMAP tracker can match
-    await supabase.from('jobs').update({
-      status: 'applied',
-      applied_at: new Date().toISOString(),
-      reply_to_email: targetEmail,
-    }).eq('id', jobId)
-    
-  } catch (error) {
-    log(`🚨 Failed to send email: ${(error as any).message}`)
-  }
 }
 
 // If run directly for testing:

@@ -111,6 +111,28 @@ async def supabase_select(table: str, params: dict) -> list:
             return resp.json()
         return []
 
+async def get_user_telegram_groups(user_id: str) -> list[str]:
+    data = await supabase_select("profiles", {"user_id": f"eq.{user_id}", "select": "job_preferences"})
+    if data and len(data) > 0:
+        prefs = data[0].get("job_preferences") or {}
+        groups = prefs.get("telegram_groups", [])
+        if groups:
+            return groups
+    return DEFAULT_GROUPS
+
+def push_to_redis_queue(queue_name: str, payload: dict):
+    if not UPSTASH_REDIS_REST_URL or not UPSTASH_REDIS_REST_TOKEN:
+        log("⚠️ Redis not configured, cannot queue task")
+        return
+    try:
+        url = f"{UPSTASH_REDIS_REST_URL}/rpush/{queue_name}"
+        headers = {"Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}"}
+        with httpx.Client() as client:
+            client.post(url, headers=headers, json=[json.dumps(payload)], timeout=5.0)
+            log(f"   📥 Queued task in {queue_name}")
+    except Exception as e:
+        log(f"   ⚠️ Failed to queue task: {e}")
+
 # ─── AI Scoring ───────────────────────────────────────────────────────────────
 
 async def score_lead_with_ai(message_text: str) -> dict:
@@ -400,38 +422,20 @@ class TelegramScraper:
             job_id = saved.get("id", "")
             log(f"   ✅ Saved to dashboard! (ID: {str(job_id)[:8]}...)")
             
-            import subprocess
-            import platform
-            kwargs = {}
-            if platform.system() != 'Windows':
-                kwargs['start_new_session'] = True
-            else:
-                kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
-                
             if apply_email:
                 log(f"   ✉️ Found email: {apply_email} - Auto-sending cold email!")
-                try:
-                    subprocess.Popen(
-                        ["npx", "tsx", "agents/email/mailer.ts", self.user_id, apply_email, str(job_id)],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        **kwargs
-                    )
-                    log(f"   🚀 Gmail Agent dispatched in background.")
-                except Exception as e:
-                    log(f"   ⚠️ Failed to spawn Mailer: {e}")
+                push_to_redis_queue("email_tasks", {
+                    "user_id": self.user_id,
+                    "email": apply_email,
+                    "job_id": job_id
+                })
             elif apply_link and ("forms.gle" in apply_link or "google.com/forms" in apply_link):
                 log(f"   🔗 Found Google Form link: {apply_link} - Triggering Auto-Applier!")
-                try:
-                    subprocess.Popen(
-                        ["npx", "tsx", "agents/forms/googleForms.ts", self.user_id, apply_link, str(job_id)],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        **kwargs
-                    )
-                    log(f"   🚀 Google Forms Agent dispatched in background.")
-                except Exception as e:
-                    log(f"   ⚠️ Failed to spawn Forms Agent: {e}")
+                push_to_redis_queue("form_tasks", {
+                    "user_id": self.user_id,
+                    "url": apply_link,
+                    "job_id": job_id
+                })
 
     async def stop(self):
         self.running = False
@@ -448,10 +452,12 @@ async def main():
         print("   or set AUTOAPPLY_USER_ID in .env.local")
         sys.exit(1)
 
-    # Custom groups from CLI (comma-separated)
+    # Custom groups from CLI or Database
     groups = None
     if len(sys.argv) > 2:
         groups = [g.strip().lstrip("@") for g in sys.argv[2].split(",")]
+    else:
+        groups = await get_user_telegram_groups(user_id)
 
     scraper = TelegramScraper(user_id=user_id, groups=groups)
 

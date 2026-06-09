@@ -24,11 +24,22 @@ export function randomDelay(minMs: number, maxMs: number): Promise<void> {
 
 /**
  * Check if we should take a break (anti-detection)
- * Takes a break every 8-12 actions
  */
 export function shouldTakeBreak(actionsCount: number): boolean {
-  const breakEvery = Math.floor(Math.random() * 5) + 8 // 8-12
-  return actionsCount > 0 && actionsCount % breakEvery === 0
+  if (actionsCount < 5) return false
+
+  // Logistic fatigue curve: probability rises from 5% at action 5 to 80% at action 30
+  const fatigueProbability = 1 / (1 + Math.exp(-(actionsCount - 15) / 4))
+  const roll = Math.random()
+
+  return roll < fatigueProbability * 0.6 // cap at 48% per check
+}
+
+/**
+ * Mandatory long break regardless of probability
+ */
+export function requiresMandatoryBreak(actionsCount: number): boolean {
+  return actionsCount > 0 && actionsCount % 25 === 0
 }
 
 /**
@@ -38,6 +49,11 @@ export function getBreakDuration(): number {
   return Math.floor(Math.random() * 7 * 60 * 1000) + 3 * 60 * 1000
 }
 
+function bezierPoint(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  const mt = 1 - t
+  return mt * mt * mt * p0 + 3 * mt * mt * t * p1 + 3 * mt * t * t * p2 + t * t * t * p3
+}
+
 /**
  * Move mouse in a natural bezier curve
  */
@@ -45,17 +61,34 @@ export async function randomMouseMove(page: Page): Promise<void> {
   const viewport = page.viewportSize()
   if (!viewport) return
 
-  const targetX = Math.floor(Math.random() * viewport.width * 0.8) + viewport.width * 0.1
-  const targetY = Math.floor(Math.random() * viewport.height * 0.8) + viewport.height * 0.1
+  // Current approximate position (assume center if unknown)
+  const startX = Math.floor(Math.random() * viewport.width)
+  const startY = Math.floor(Math.random() * viewport.height)
+  const endX = Math.floor(Math.random() * viewport.width * 0.8) + viewport.width * 0.1
+  const endY = Math.floor(Math.random() * viewport.height * 0.8) + viewport.height * 0.1
 
-  // Move in small steps (bezier approximation)
-  const steps = Math.floor(Math.random() * 10) + 5
-  for (let i = 0; i < steps; i++) {
-    const progress = i / steps
-    const x = targetX * progress + Math.random() * 20 - 10
-    const y = targetY * progress + Math.random() * 20 - 10
-    await page.mouse.move(x, y)
-    await new Promise(r => setTimeout(r, Math.random() * 30 + 10))
+  // Random control points for natural curve
+  const cp1x = startX + (Math.random() - 0.5) * 200
+  const cp1y = startY + (Math.random() - 0.5) * 200
+  const cp2x = endX + (Math.random() - 0.5) * 200
+  const cp2y = endY + (Math.random() - 0.5) * 200
+
+  const steps = Math.floor(Math.random() * 20) + 15 // 15-35 steps
+
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps
+    const x = bezierPoint(startX, cp1x, cp2x, endX, t)
+    const y = bezierPoint(startY, cp1y, cp2y, endY, t)
+
+    // Micro-jitter to break perfect curve detection
+    const jX = (Math.random() - 0.5) * 2
+    const jY = (Math.random() - 0.5) * 2
+
+    await page.mouse.move(x + jX, y + jY)
+
+    // Variable speed: slower at start/end (like real mouse deceleration)
+    const speed = t < 0.2 || t > 0.8 ? 20 + Math.random() * 20 : 5 + Math.random() * 10
+    await new Promise(r => setTimeout(r, speed))
   }
 }
 
@@ -74,10 +107,29 @@ export async function simulateTabSwitch(page: Page): Promise<void> {
  * Check if LinkedIn shows any warning/restriction
  */
 export async function checkForRestriction(page: Page): Promise<boolean> {
-  const restricted = await page.$('[class*="restriction"], [class*="blocked"], [class*="limit"]')
-  if (restricted) {
-    console.log('🚨 LinkedIn restriction detected!')
-    return true
+  const bodyText = await page.evaluate(() => document.body.innerText.toLowerCase())
+  
+  const restrictionSignals = [
+    'unusual activity',
+    'account restricted',
+    'temporarily limited',
+    'too many requests',
+    'security verification',
+    'please verify',
+    'we noticed some unusual',
+    'your account has been',
+  ]
+
+  const isRestricted = restrictionSignals.some(signal => bodyText.includes(signal))
+
+  if (isRestricted) {
+    console.log('🚨 LinkedIn restriction detected via content analysis!')
+    // We should take a screenshot and optionally push alert to Redis
+    try {
+      await page.screenshot({ path: `restriction-${Date.now()}.png` })
+      console.log('📸 Screenshot saved')
+    } catch (err) {}
   }
-  return false
+
+  return isRestricted
 }

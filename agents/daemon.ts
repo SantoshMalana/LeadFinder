@@ -1,16 +1,19 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, RealtimeChannel } from '@supabase/supabase-js'
 import { spawn, ChildProcess } from 'child_process'
 import treeKill from 'tree-kill'
 import * as cron from 'node-cron'
 import * as dotenv from 'dotenv'
 import * as path from 'path'
 import { validateEnv } from '../lib/validateEnv'
+import { Redis } from '@upstash/redis'
+import { isAgentAlive } from '../lib/heartbeat'
 
 dotenv.config({ path: path.join(process.cwd(), '.env.local') })
 
 validateEnv('daemon')
 
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
+const redis = Redis.fromEnv()
 
 // Map to keep track of running processes per user
 const activeAgents: Record<string, ChildProcess[]> = {}
@@ -28,9 +31,27 @@ function startAgentsForUser(userId: string) {
   const processes: ChildProcess[] = []
 
   const spawnAgent = (name: string, cmd: string, args: string[]) => {
-    const p = spawn(cmd, args, { stdio: 'inherit', shell: true })
+    const p = spawn(cmd, args, { 
+      stdio: 'inherit', 
+      shell: true,
+      env: {
+        ...process.env,
+        NODE_OPTIONS: '--max-old-space-size=512',
+      }
+    })
+    
+    // Kill after max runtime (6 hours) to force fresh session
+    const maxRuntime = 6 * 60 * 60 * 1000
+    const killTimer = setTimeout(() => {
+      if (!p.killed && p.pid) {
+        console.log(`[Daemon] Max runtime reached for ${name} — killing for fresh restart`)
+        treeKill(p.pid, 'SIGTERM')
+      }
+    }, maxRuntime)
+    
     p.on('error', (err) => console.error(`[Daemon] ${name} error:`, err))
     p.on('exit', (code) => {
+      clearTimeout(killTimer)
       console.log(`[Daemon] ${name} exited with code ${code}`)
       
       // Prevent PID reuse by removing from active array immediately
@@ -41,6 +62,9 @@ function startAgentsForUser(userId: string) {
       if (code !== 0 && code !== null && activeAgents[userId]) {
         console.log(`[Daemon] Restarting crashed ${name} in 10s...`)
         const timeoutId = setTimeout(() => {
+          if (pendingRestarts[userId]) {
+            pendingRestarts[userId] = pendingRestarts[userId].filter(t => t !== timeoutId)
+          }
           if (activeAgents[userId]) {
             const newP = spawnAgent(name, cmd, args)
             activeAgents[userId].push(newP)
@@ -94,6 +118,41 @@ function stopAgentsForUser(userId: string) {
   console.log(`[Daemon] Agents stopped for user ${userId}`)
 }
 
+async function watchProfiles() {
+  let channel: RealtimeChannel
+
+  const resubscribe = () => {
+    if (channel) supabase.removeChannel(channel)
+
+    channel = supabase
+      .channel('profiles-changes')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'profiles' },
+        (payload) => {
+          const { user_id, autoapply_running } = payload.new as any
+          const isRunningLocally = !!activeAgents[user_id]
+
+          if (autoapply_running && !isRunningLocally) {
+            console.log(`[Realtime] START signal for ${user_id}`)
+            startAgentsForUser(user_id)
+          } else if (!autoapply_running && isRunningLocally) {
+            console.log(`[Realtime] STOP signal for ${user_id}`)
+            stopAgentsForUser(user_id)
+          }
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR') {
+          console.error('[Realtime] Channel error — resubscribing in 5s')
+          setTimeout(resubscribe, 5_000)
+        }
+      })
+  }
+
+  resubscribe()
+}
+
 async function initDaemon() {
   console.log('🚀 Daemon starting...')
 
@@ -118,49 +177,62 @@ async function initDaemon() {
     }
   }
 
-  // 2. Poll for changes every 3 seconds to guarantee delivery 
-  let isPolling = false
-  setInterval(async () => {
-    if (isPolling) return
-    isPolling = true
-    try {
-      const { data: currentProfiles } = await supabase
-        .from('profiles')
-        .select('user_id, autoapply_running')
-
-      if (!currentProfiles) return
-
-      const currentProfileIds = new Set(currentProfiles.map(p => p.user_id))
-
-      // Check if any running agents belong to deleted users
-      for (const userId of Object.keys(activeAgents)) {
-        if (!currentProfileIds.has(userId)) {
-          console.log(`[Daemon] User ${userId} not found in DB. Stopping zombie agents...`)
-          stopAgentsForUser(userId)
-        }
-      }
-
-      for (const p of currentProfiles) {
-        const isRunningInDb = p.autoapply_running
-        const isRunningLocally = !!activeAgents[p.user_id]
-
-        if (isRunningInDb && !isRunningLocally) {
-          console.log(`[Daemon] Detected START signal for user ${p.user_id}`)
-          startAgentsForUser(p.user_id)
-        } else if (!isRunningInDb && isRunningLocally) {
-          console.log(`[Daemon] Detected STOP signal for user ${p.user_id}`)
-          stopAgentsForUser(p.user_id)
-        }
-      }
-    } catch (err) {
-      console.error('[Daemon] Polling error:', err)
-    } finally {
-      isPolling = false
-    }
-  }, 3000)
+  // 2. Realtime listener replacing interval polling
+  watchProfiles()
 
   // 3. Schedule Background Cron Jobs
   console.log('[Daemon] Scheduling background cron tasks...')
+
+  // Heartbeat checker
+  cron.schedule('*/5 * * * *', async () => {
+    for (const [userId, processes] of Object.entries(activeAgents)) {
+      const agents = ['linkedin', 'reddit', 'telegram']
+      for (const name of agents) {
+        const alive = await isAgentAlive(name, userId)
+        if (!alive && processes.length > 0) {
+          console.log(`[Health] ${name} agent for ${userId} is STUCK — killing and restarting`)
+          stopAgentsForUser(userId)
+          startAgentsForUser(userId)
+          break
+        }
+      }
+    }
+  })
+
+  // Task queue worker (for Telegram mailer/forms)
+  cron.schedule('*/2 * * * *', async () => {
+    for (const userId of Object.keys(activeAgents)) {
+      const taskStr = await redis.rpop<string>(`task_queue:${userId}`)
+      if (!taskStr) continue
+
+      const task = typeof taskStr === 'string' ? JSON.parse(taskStr) : taskStr
+      const { type, payload } = task
+      console.log(`[TaskWorker] Processing ${type} for ${userId}`)
+
+      const pythonCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx'
+      if (type === 'send_cold_email') {
+        const p = spawn(pythonCmd, ['tsx', 'agents/email/mailer.ts', userId, payload.target_email, payload.job_id], { stdio: 'inherit', shell: true })
+        p.on('error', (err) => console.error(`[TaskWorker] Error running Mailer:`, err))
+      } else if (type === 'fill_google_form') {
+        const p = spawn(pythonCmd, ['tsx', 'agents/forms/googleForms.ts', userId, payload.form_url], { stdio: 'inherit', shell: true })
+        p.on('error', (err) => console.error(`[TaskWorker] Error running GoogleForms:`, err))
+      }
+    }
+  })
+
+  // Scheduled cold emails
+  cron.schedule('* * * * *', async () => {
+    const now = Date.now()
+    const due = await redis.zrange('scheduled_emails', 0, now, { byScore: true, offset: 0, count: 10 })
+
+    for (const taskStr of due) {
+      const task = typeof taskStr === 'string' ? JSON.parse(taskStr) : taskStr
+      await redis.zrem('scheduled_emails', taskStr as string)
+      const pythonCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx'
+      const p = spawn(pythonCmd, ['tsx', 'agents/email/mailer.ts', task.userId, task.targetEmail, task.jobId], { stdio: 'inherit', shell: true })
+      p.on('error', (err) => console.error(`[ScheduledEmails] Error running Mailer:`, err))
+    }
+  })
 
   let isImapRunning = false
   // Check Gmail for recruiter replies every 15 minutes

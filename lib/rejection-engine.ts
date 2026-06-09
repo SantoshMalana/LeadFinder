@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
+import type { Persona } from './persona'
 
 let _db: SupabaseClient | null = null
 function getDb(): SupabaseClient {
@@ -131,4 +132,26 @@ export async function markSilentRejections(userId: string) {
     .in('id', jobIds)
 
   return staleJobs.length
+}
+
+export async function getBestStrategies(userId: string): Promise<{
+  bestPlatform: string | null
+  bestPersona: Persona | null
+  platformMultipliers: Record<string, number>
+}> {
+  const { best_platform, best_persona, raw } = await getInsights(userId)
+
+  // Build a multiplier map: platforms with >10% success get a 1.5x priority boost
+  const platformMultipliers: Record<string, number> = {}
+  if (raw) {
+    for (const p of raw.filter(r => r.pattern_type === 'platform' && r.total_count >= 5)) {
+      platformMultipliers[p.pattern_value] = p.success_rate >= 0.1 ? 1.5 : (p.success_rate < 0.03 ? 0.5 : 1.0)
+    }
+  }
+
+  return {
+    bestPlatform: best_platform || null,
+    bestPersona: (best_persona as Persona) || null,
+    platformMultipliers,
+  }
 }

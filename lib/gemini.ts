@@ -1,23 +1,18 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
-
-let _gemini: GoogleGenerativeAI | null = null
+import { getRandomGeminiKey } from './aiKeys'
 
 export const gemini = new Proxy({} as GoogleGenerativeAI, {
   get(target, prop) {
-    if (!_gemini) {
-      if (!process.env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY is missing')
-      _gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
-    }
+    const key = getRandomGeminiKey()
+    if (!key) throw new Error('GEMINI_API_KEY is missing')
+    const _gemini = new GoogleGenerativeAI(key)
     return (_gemini as any)[prop]
   }
 })
 
-let _flashModel: any = null
 export const flashModel = new Proxy({} as any, {
   get(target, prop) {
-    if (!_flashModel) {
-      _flashModel = gemini.getGenerativeModel({ model: 'gemini-2.5-flash' })
-    }
-    return _flashModel[prop]
+    const model = gemini.getGenerativeModel({ model: 'gemini-2.5-flash' })
+    return (model as any)[prop]
   }
 })

@@ -104,64 +104,71 @@ export async function fillGoogleForm(userId: string, formUrl: string) {
     await page.goto(formUrl, { waitUntil: 'networkidle' })
     await randomDelay(2000, 4000)
 
-    // Scroll randomly to read
-    log(`👀 Scanning form questions (human scroll simulation)...`)
-    await page.mouse.wheel(0, 500)
-    await randomDelay(1000, 2000)
-    await page.mouse.wheel(0, -300)
-    await randomDelay(1000, 2000)
+    let maxPages = 5
+    let pageNum = 1
 
-    // Extract questions and their input boxes
-    // In Google Forms, the container usually has role="listitem"
-    const questionsData = await page.$$eval('div[role="listitem"]', items => {
-      return items.map((item, index) => {
-        // The text is usually in a div with role="heading" or similar.
-        const titleEl = item.querySelector('div[role="heading"]')
-        const textInput = item.querySelector('input[type="text"], input[type="email"], textarea')
-        
-        if (titleEl && textInput) {
-          // Add a unique ID to the input so we can select it easily later
-          const id = `gform-input-${index}`
-          textInput.setAttribute('id', id)
+    while (pageNum <= maxPages) {
+      // Scroll randomly to read
+      log(`👀 Scanning form questions on page ${pageNum} (human scroll simulation)...`)
+      await page.mouse.wheel(0, 500)
+      await randomDelay(1000, 2000)
+      await page.mouse.wheel(0, -300)
+      await randomDelay(1000, 2000)
+
+      // Extract questions and their input boxes
+      const questionsData = await page.$$eval('div[role="listitem"]', items => {
+        return items.map((item, index) => {
+          const titleEl = item.querySelector('div[role="heading"]')
+          const textInput = item.querySelector('input[type="text"], input[type="email"], textarea')
           
-          let titleText = titleEl.textContent || ''
-          titleText = titleText.replace(/\*$/, '').trim() // Remove required asterisks
-          
-          return { id, title: titleText }
+          if (titleEl && textInput) {
+            const id = `gform-input-p${pageNum}-${index}`
+            textInput.setAttribute('id', id)
+            let titleText = titleEl.textContent || ''
+            titleText = titleText.replace(/\*$/, '').trim()
+            return { id, title: titleText }
+          }
+          return null
+        }).filter(i => i !== null)
+      })
+
+      if (questionsData.length > 0) {
+        log(`🧠 Found ${questionsData.length} questions. Asking Groq AI for perfect answers...`)
+        const questionStrings = questionsData.map(q => q!.title)
+        const answers = await getAnswersFromGroq(profile.parsed_data, questionStrings)
+
+        for (const q of questionsData) {
+          if (!q) continue
+          const answer = answers[q.title]
+          if (answer) {
+            log(`   ✍️ Typing answer for: "${q.title.substring(0, 30)}..."`)
+            await humanType(page, `#${q.id}`, answer)
+            await randomDelay(500, 1500) // Pause between questions
+          }
         }
-        return null
-      }).filter(i => i !== null)
-    })
-
-    if (questionsData.length === 0) {
-      log(`⚠️ Could not parse any standard text questions on this form.`)
-      await browser.close()
-      return
-    }
-
-    log(`🧠 Found ${questionsData.length} questions. Asking Groq AI for perfect answers...`)
-    const questionStrings = questionsData.map(q => q!.title)
-    const answers = await getAnswersFromGroq(profile.parsed_data, questionStrings)
-
-    for (const q of questionsData) {
-      if (!q) continue
-      const answer = answers[q.title]
-      if (answer) {
-        log(`   ✍️ Typing answer for: "${q.title.substring(0, 30)}..."`)
-        await humanType(page, `#${q.id}`, answer)
-        await randomDelay(500, 1500) // Pause between questions
+      } else {
+        log(`⚠️ No standard text questions found on page ${pageNum}. Proceeding...`)
       }
-    }
 
-    log(`🚀 All questions answered! Preparing to submit...`)
-    await randomDelay(2000, 4000)
-    
-    const submitBtn = await page.$('div[role="button"]:has-text("Submit")')
-    if (submitBtn) {
-      await submitBtn.click() 
-      log(`🎯 SUCCESS! Form filled and submitted.`)
-    } else {
-      log(`⚠️ Submit button not found. You might need to manually click submit.`)
+      await randomDelay(2000, 4000)
+      
+      const nextBtn = await page.$('div[role="button"]:has-text("Next")')
+      const submitBtn = await page.$('div[role="button"]:has-text("Submit")')
+
+      if (nextBtn) {
+        log(`➡️ Clicking 'Next' to go to next page...`)
+        await nextBtn.click()
+        await randomDelay(2000, 4000)
+        pageNum++
+      } else if (submitBtn) {
+        log(`🚀 All questions answered! Preparing to submit...`)
+        await submitBtn.click() 
+        log(`🎯 SUCCESS! Form filled and submitted.`)
+        break
+      } else {
+        log(`⚠️ Submit or Next button not found. You might need to manually click submit.`)
+        break
+      }
     }
 
     // Wait a bit to let the user see it before closing

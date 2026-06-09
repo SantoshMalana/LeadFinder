@@ -1,7 +1,7 @@
 import { groq } from './groq'
 import type { ParsedCV } from '@/types'
 
-export type Persona = 'startup' | 'enterprise' | 'ai_research' | 'default'
+export type Persona = 'startup' | 'enterprise' | 'ai_research' | 'fintech' | 'devops' | 'mobile' | 'default'
 
 interface PersonaConfig {
   name: string
@@ -33,6 +33,27 @@ const PERSONAS: Record<Persona, PersonaConfig> = {
     project_priority: ['Turing Annotation', 'RAG Pipeline', 'LeadFinder'],
     headline_suffix: '| AI/ML & Intelligent Systems',
   },
+  fintech: {
+    name: 'Fintech Engineer',
+    emphasis: ['payments', 'compliance', 'security', 'APIs', 'banking', 'transactions', 'kafka'],
+    tone: 'precise, compliance-aware, reliability-focused',
+    project_priority: ['Payment System', 'Loan System'],
+    headline_suffix: '| Fintech & Payments Infrastructure',
+  },
+  devops: {
+    name: 'DevOps / Platform Engineer',
+    emphasis: ['kubernetes', 'terraform', 'CI/CD', 'docker', 'aws', 'gcp', 'monitoring', 'sre'],
+    tone: 'systems-focused, reliability-driven, automation-first',
+    project_priority: [],
+    headline_suffix: '| Platform Engineering & Cloud Infrastructure',
+  },
+  mobile: {
+    name: 'Mobile Engineer',
+    emphasis: ['react native', 'flutter', 'ios', 'android', 'mobile', 'app'],
+    tone: 'product-focused, cross-platform savvy',
+    project_priority: [],
+    headline_suffix: '| Cross-Platform Mobile Development',
+  },
   default: {
     name: 'Balanced',
     emphasis: [],
@@ -61,8 +82,11 @@ Description: ${jobDescription.slice(0, 500)}
 
 Categories:
 - "startup" — fast-paced, early-stage, scrappy, building MVPs, wearing many hats
-- "enterprise" — large company, scalable systems, enterprise software, banking/fintech
+- "enterprise" — large company, scalable systems, enterprise software, banking
 - "ai_research" — AI, ML, data science, NLP, computer vision, LLMs, embeddings
+- "fintech" — payments, compliance, security, banking, transactions
+- "devops" — infrastructure, CI/CD, kubernetes, AWS, GCP, reliability
+- "mobile" — iOS, Android, React Native, Flutter, mobile apps
 - "default" — doesn't clearly fit any category
 
 Reply with ONLY the category name, nothing else.`,

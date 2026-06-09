@@ -10,8 +10,10 @@ import { shouldTakeBreak, getBreakDuration, addHumanBehavior, checkForRestrictio
 import type { ParsedCV } from '../types'
 import { Redis } from '@upstash/redis'
 import { signRequest } from '../lib/sign'
-import { selectPersona } from '../lib/persona'
+import { selectPersona, applyPersona } from '../lib/persona'
 import { createClient } from '@supabase/supabase-js'
+import { getBestStrategies } from '../lib/rejection-engine'
+import { sendHeartbeat } from '../lib/heartbeat'
 
 const API_BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
 
@@ -77,24 +79,16 @@ export async function startAutoApply(config: AgentConfig) {
       console.log(`📊 Resuming session: ${appliedCount} applications already made today`)
     }
   } catch { /* fall back to 0 */ }
-  let actionsCount = 0
+  
+  const sessionKey = `session_actions:${config.user_id}:${new Date().toDateString()}`
+  async function incrementActionsCount(): Promise<number> {
+    const count = await redis.incr(sessionKey)
+    await redis.expire(sessionKey, 86400) // reset at midnight
+    return count
+  }
 
   try {
-    await launchBrowser()
-    const page = await getPage()
-
-    // Navigate to LinkedIn first
-    await page.goto('https://www.linkedin.com/feed/', { waitUntil: 'domcontentloaded' })
-    await humanDelay(3000, 5000)
-
-    // Check if logged in
-    const isLoggedIn = page.url().includes('/feed') || page.url().includes('/jobs') || await page.$('.global-nav__me') !== null
-    if (!isLoggedIn) {
-      console.log('⚠️  Not logged into LinkedIn. Please log in manually.')
-      console.log('   The browser window is open — log in and the agent will continue.')
-      await page.waitForURL('**/feed/**', { timeout: 300_000 }) // Wait until the URL changes to feed
-      console.log('✅ LinkedIn login detected!')
-    }
+    const ctx = await launchBrowser()
 
     let cachedProfile: ParsedCV | null = null
     try {
@@ -106,150 +100,201 @@ export async function startAutoApply(config: AgentConfig) {
       cachedProfile = data?.parsed_data || null
     } catch { /* keep null */ }
 
+    // Fetch best strategies
+    const { bestPersona, platformMultipliers } = await getBestStrategies(config.user_id)
+
     // Main loop — search for each role
     for (const role of config.roles) {
       if (appliedCount >= config.max_daily) break
       if (!(await checkShouldContinue(config.user_id))) break
 
-      const location = config.locations[0] || ''
-      console.log(`\n🔍 Searching for: "${role}" in "${location}"`)
+      const page = await ctx.newPage() // Fresh tab per role
 
-      await searchJobs(page, role, location, { easyApply: true, datePosted: '24h' })
-      await addHumanBehavior(page)
+      try {
+        const location = config.locations[0] || ''
+        console.log(`\n🔍 Searching for: "${role}" in "${location}"`)
 
-      const listings = await extractJobListings(page)
-      console.log(`📋 Found ${listings.length} listings`)
+        // Ensure linkedin is open in the tab
+        await page.goto('https://www.linkedin.com/feed/', { waitUntil: 'domcontentloaded' })
+        await humanDelay(2000, 4000)
 
-      for (const listing of listings) {
-        if (appliedCount >= config.max_daily) break
-        if (!(await checkShouldContinue(config.user_id))) break
-
-        // Anti-detection breaks
-        actionsCount++
-        if (shouldTakeBreak(actionsCount)) {
-          const breakMs = getBreakDuration()
-          console.log(`☕ Taking a ${Math.round(breakMs / 60000)}min break...`)
-          await new Promise(r => setTimeout(r, breakMs))
+        // Check if logged in
+        const isLoggedIn = page.url().includes('/feed') || page.url().includes('/jobs') || await page.$('.global-nav__me') !== null
+        if (!isLoggedIn) {
+            console.log('⚠️  Not logged into LinkedIn. Waiting for manual login...')
+            await page.waitForURL('**/feed/**', { timeout: 300_000 }) 
+            console.log('✅ LinkedIn login detected!')
         }
 
-        let matchData
-        let details: any = {}
-        try {
-          // Fetch job description for persona selection
-          details = await getJobDetails(page, listing.job_url)
-          const persona = await selectPersona(listing.title, details.description || '')
+        await searchJobs(page, role, location, { easyApply: true, datePosted: '24h' })
+        await addHumanBehavior(page)
 
-          // Score job using internal API (with HMAC)
-          const payload = JSON.stringify({
-            title: listing.title,
-            company: listing.company,
-            location: listing.location,
-            source: 'linkedin',
-            job_url: listing.job_url,
-            user_id: config.user_id,
-            persona_used: persona,
-            cv_version: (cachedProfile as any)?.last_updated || 'v1',
-            description: details.description || ''
-          })
-          
-          const matchRes = await fetch(`${API_BASE}/api/jobs/match`, {
-            method: 'POST',
-            headers: signRequest(payload),
-            body: payload,
-          })
-          if (!matchRes.ok) throw new Error(`API returned ${matchRes.status}`)
-          matchData = await matchRes.json()
-        } catch (err) {
-          console.log(`⚠️ Match error for "${listing.title}":`, err)
-          continue
-        }
+        const listings = await extractJobListings(page)
+        console.log(`📋 Found ${listings.length} listings`)
 
-        if (matchData.score < config.threshold) {
-          console.log(`⏭️  Skip: "${listing.title}" at ${listing.company} (score: ${matchData.score} is below threshold ${config.threshold})`)
-          continue
-        }
+        for (const listing of listings) {
+          if (appliedCount >= config.max_daily) break
+          if (!(await checkShouldContinue(config.user_id))) break
 
-        console.log(`\n🎯 Match! "${listing.title}" at ${listing.company} (score: ${matchData.score})`)
+          await sendHeartbeat('linkedin', config.user_id)
 
-        try {
-          // Navigate to job
-          if (listing.job_url) {
-            await page.goto(listing.job_url, { waitUntil: 'domcontentloaded' })
-            await humanDelay(2000, 4000)
+          // Anti-detection breaks
+          const actionsCount = await incrementActionsCount()
+          if (shouldTakeBreak(actionsCount)) {
+            const breakMs = getBreakDuration()
+            console.log(`☕ Taking a ${Math.round(breakMs / 60000)}min break...`)
+            await sendHeartbeat('linkedin', config.user_id) // keep heartbeat alive during break
+            await new Promise(r => setTimeout(r, breakMs))
           }
 
-          // Check for restriction
-          if (await checkForRestriction(page)) {
-            console.log('🛑 LinkedIn restriction — stopping for today')
-            break
-          }
-
-          // Reuse details from pre-match fetch (line 138) — no second page load needed
-
-          // Log the attempt
-          await logAction(matchData.job_id, 'page_opened', { url: listing.job_url })
-
-          if (!listing.is_easy_apply && !details.is_easy_apply) {
-            console.log('⏭️  Not Easy Apply — skipping for now')
-            await logAction(matchData.job_id, 'skipped', { reason: 'Not Easy Apply' })
-            continue
-          }
-
-          // Start Easy Apply
-          const started = await startEasyApply(page)
-          if (!started) {
-            await logAction(matchData.job_id, 'error', { reason: 'Could not click Easy Apply' })
-            continue
-          }
-          await logAction(matchData.job_id, 'form_detected', {})
-
-          // Get profile for form filling (signed request)
-          let statusData: any = {}
+          let matchData
+          let details: any = {}
           try {
-            const statusPayload = `user_id=${config.user_id}`
-            const profileRes = await fetch(`${API_BASE}/api/autoapply/status?user_id=${config.user_id}`, {
-              headers: signRequest(statusPayload)
+            // Navigate to job directly
+            if (listing.job_url) {
+              await page.goto(listing.job_url, { waitUntil: 'domcontentloaded' })
+              await humanDelay(2000, 4000)
+            }
+
+            // Extract details from the currently loaded page (Bug 8 fix)
+            details = await page.evaluate(() => {
+              const descEl = document.querySelector('.jobs-description__content, .jobs-box__html-content, #job-details')
+              const easyApplyBtn = document.querySelector('.jobs-apply-button--top-card, .jobs-apply-button')
+              return {
+                description: (descEl as HTMLElement)?.innerText?.trim() || '',
+                is_easy_apply: !!easyApplyBtn && easyApplyBtn.textContent?.includes('Easy Apply'),
+              }
             })
-            if (profileRes.ok) statusData = await profileRes.json()
-          } catch {}
 
-          // Handle multi-step form fallback profile
-          const dummyProfile: ParsedCV = {
-            name: '', email: '', phone: '', location: '', linkedin_url: null,
-            github_url: null, portfolio_url: null, headline: '', summary: '',
-            years_of_experience: 0, skills: { languages: [], frameworks: [], tools: [], databases: [], soft_skills: [] },
-            experience: [], education: [], projects: [], certifications: [],
+            const effectivePersona = bestPersona ? bestPersona : await selectPersona(listing.title, details.description || '')
+
+            // Score job using internal API (with HMAC)
+            const payload = JSON.stringify({
+              title: listing.title,
+              company: listing.company,
+              location: listing.location,
+              source: 'linkedin',
+              job_url: listing.job_url,
+              user_id: config.user_id,
+              persona_used: effectivePersona,
+              cv_version: (cachedProfile as any)?.last_updated || 'v1',
+              description: details.description || ''
+            })
+            
+            const matchRes = await fetch(`${API_BASE}/api/jobs/match`, {
+              method: 'POST',
+              headers: signRequest(payload),
+              body: payload,
+            })
+            if (!matchRes.ok) throw new Error(`API returned ${matchRes.status}`)
+            matchData = await matchRes.json()
+            matchData.persona_used = effectivePersona
+          } catch (err) {
+            console.log(`⚠️ Match error for "${listing.title}":`, err)
+            continue
           }
 
-          // Use actual profile from earlier match if available
-          const profileToUse = statusData?.parsed_data || cachedProfile || dummyProfile
-          const result = await handleMultiStep(page, profileToUse, matchData.job_id, config.user_id, {
-            title: listing.title,
-            company: listing.company,
-            description: details.description || ''
-          })
+          // Incorporate platform multipliers into threshold
+          const multiplier = platformMultipliers['linkedin'] || 1.0
+          const adjustedThreshold = config.threshold / multiplier
 
-          if (result === 'submitted') {
-            appliedCount++
-            await updateJobStatus(matchData.job_id, 'applied')
-            await logAction(matchData.job_id, 'submitted', { application_number: appliedCount })
-            console.log(`✅ Applied! (${appliedCount}/${config.max_daily} today)`)
-          } else if (result === 'captcha') {
-            await updateJobStatus(matchData.job_id, 'failed', 'CAPTCHA required')
-            await logAction(matchData.job_id, 'captcha_hit', {})
-          } else {
-            await updateJobStatus(matchData.job_id, 'failed', 'Form filling error')
-            await logAction(matchData.job_id, 'error', { step: 'multi-step' })
+          if (matchData.score < adjustedThreshold) {
+            console.log(`⏭️  Skip: "${listing.title}" at ${listing.company} (score: ${matchData.score} is below adjusted threshold ${adjustedThreshold.toFixed(1)})`)
+            continue
           }
 
-          // Close any modal
-          const dismissBtn = await page.$('button[aria-label="Dismiss"], button:has-text("Discard"), .artdeco-modal__dismiss')
-          if (dismissBtn) await dismissBtn.click().catch(() => {})
-          await humanDelay(1000, 2000)
+          console.log(`\n🎯 Match! "${listing.title}" at ${listing.company} (score: ${matchData.score})`)
 
-        } catch (err) {
-          console.error(`❌ Error processing "${listing.title}":`, err)
+          try {
+            // Check for restriction
+            if (await checkForRestriction(page)) {
+              console.log('🛑 LinkedIn restriction — stopping for today')
+              break
+            }
+
+            // Log the attempt
+            await logAction(matchData.job_id, 'page_opened', { url: listing.job_url })
+
+            if (!listing.is_easy_apply && !details.is_easy_apply) {
+              console.log('⏭️  Not Easy Apply — skipping for now')
+              await logAction(matchData.job_id, 'skipped', { reason: 'Not Easy Apply' })
+              continue
+            }
+
+            // Start Easy Apply
+            const started = await startEasyApply(page)
+            if (!started) {
+              await logAction(matchData.job_id, 'error', { reason: 'Could not click Easy Apply' })
+              continue
+            }
+            await logAction(matchData.job_id, 'form_detected', {})
+
+            // Get profile for form filling
+            let statusData: any = {}
+            try {
+              const statusPayload = `user_id=${config.user_id}`
+              const profileRes = await fetch(`${API_BASE}/api/autoapply/status?user_id=${config.user_id}`, {
+                headers: signRequest(statusPayload)
+              })
+              if (profileRes.ok) statusData = await profileRes.json()
+            } catch {}
+
+            const dummyProfile: ParsedCV = {
+              name: '', email: '', phone: '', location: '', linkedin_url: null,
+              github_url: null, portfolio_url: null, headline: '', summary: '',
+              years_of_experience: 0, skills: { languages: [], frameworks: [], tools: [], databases: [], soft_skills: [] },
+              experience: [], education: [], projects: [], certifications: [],
+            }
+
+            const profileToUse = statusData?.parsed_data || cachedProfile || dummyProfile
+            
+            // Bug 27: Save adjusted snapshot
+            const adjustedProfile = applyPersona(profileToUse, matchData.persona_used)
+            try {
+              await supabase.from('generated_content').insert({
+                user_id: config.user_id,
+                job_id: matchData.job_id,
+                content_type: 'resume_summary',
+                question: `Persona: ${matchData.persona_used}`,
+                answer: JSON.stringify({
+                  headline: adjustedProfile.headline,
+                  summary: adjustedProfile.summary,
+                  top_skills: [...(adjustedProfile.skills?.frameworks || [])].slice(0, 8),
+                  top_projects: (adjustedProfile.projects || []).slice(0, 3).map(p => p.name),
+                }),
+              })
+            } catch {}
+
+            const result = await handleMultiStep(page, adjustedProfile, matchData.job_id, config.user_id, {
+              title: listing.title,
+              company: listing.company,
+              description: details.description || ''
+            })
+
+            if (result === 'submitted') {
+              appliedCount++
+              await updateJobStatus(matchData.job_id, 'applied')
+              await logAction(matchData.job_id, 'submitted', { application_number: appliedCount })
+              console.log(`✅ Applied! (${appliedCount}/${config.max_daily} today)`)
+            } else if (result === 'captcha') {
+              await updateJobStatus(matchData.job_id, 'failed', 'CAPTCHA required')
+              await logAction(matchData.job_id, 'captcha_hit', {})
+            } else {
+              await updateJobStatus(matchData.job_id, 'failed', 'Form filling error')
+              await logAction(matchData.job_id, 'error', { step: 'multi-step' })
+            }
+
+            const dismissBtn = await page.$('button[aria-label="Dismiss"], button:has-text("Discard"), .artdeco-modal__dismiss')
+            if (dismissBtn) await dismissBtn.click().catch(() => {})
+            await humanDelay(1000, 2000)
+
+          } catch (err) {
+            console.error(`❌ Error processing "${listing.title}":`, err)
+          }
         }
+      } finally {
+        await page.close() // Close the tab for this role
+        await humanDelay(3000, 6000)
       }
     }
 
@@ -315,12 +360,14 @@ if (require.main === module) {
     .then(r => r.json())
     .then(data => {
       if (data.error) throw new Error(`Status API error: ${data.error}`)
+      const prefs = data.job_preferences || {}
+      
       startAutoApply({
         user_id: userId,
-        max_daily: data.today_limit || 25,
-        threshold: data.threshold || 7,
-        roles: data.queued_jobs?.map((j: any) => j.title).filter(Boolean).slice(0, 5) || ['Full Stack Developer', 'React Developer', 'Frontend Developer'],
-        locations: ['Remote', ''],
+        max_daily: prefs.max_applications_per_day || 25,
+        threshold: prefs.auto_apply_threshold || 7,
+        roles: prefs.roles?.length ? prefs.roles : ['Software Developer'],
+        locations: prefs.locations?.length ? prefs.locations : ['Remote'],
       })
     })
     .catch(err => {

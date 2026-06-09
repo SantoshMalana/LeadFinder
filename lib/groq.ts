@@ -1,13 +1,13 @@
 import Groq from 'groq-sdk'
-
-let _groq: Groq | null = null
+import { getRandomGroqKey } from './aiKeys'
 
 export const groq = new Proxy({} as Groq, {
   get(target, prop) {
-    if (!_groq) {
-      if (!process.env.GROQ_API_KEY) throw new Error('GROQ_API_KEY is missing')
-      _groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
-    }
+    const key = getRandomGroqKey()
+    if (!key) throw new Error('GROQ_API_KEY is missing')
+    
+    // We instantiate a new Groq client on every access to pick up dynamic key rotation
+    const _groq = new Groq({ apiKey: key })
     return (_groq as any)[prop]
   }
 })

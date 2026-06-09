@@ -65,7 +65,13 @@ export async function fillEasyApplyForm(page: Page, profile: ParsedCV): Promise<
     if (label.toLowerCase().includes('cover') || label.toLowerCase().includes('additional')) {
       const val = await ta.inputValue()
       if (!val) {
-        await ta.fill(`I am highly interested in this opportunity. With ${profile.years_of_experience || 3}+ years of experience in ${profile.skills?.frameworks?.slice(0, 3).join(', ') || 'software development'}, I believe I can make a strong contribution to your team.`)
+        const fallbacks = [
+          `${profile.experience[0]?.title || 'Engineer'} with ${profile.years_of_experience || 3}+ years shipping production ${(profile.skills.frameworks || []).slice(0, 2).join(' and ')} applications. Excited to bring that to this role.`,
+          `My work on ${profile.projects[0]?.name || 'recent projects'} — ${profile.projects[0]?.description?.slice(0, 80) || 'production-grade systems'} — aligns directly with what you're building.`,
+          `${profile.years_of_experience || 3} years of ${(profile.skills.languages || [])[0] || 'full-stack'} development, focused on ${(profile.skills.frameworks || []).slice(0, 3).join(', ')}. Happy to share more specifics.`,
+        ]
+        const text = fallbacks[Math.floor(Math.random() * fallbacks.length)]
+        await ta.fill(text)
       }
     }
   }
@@ -118,25 +124,42 @@ export async function handleScreeningQuestion(
       }
       if (isChecked) continue
 
-      // Use AI for radio buttons as well, or skip. Blindly clicking "Yes" is dangerous.
+      // Get all available labels
+      const radioLabels = await q.$$eval(
+        'label',
+        (labels) => labels.map(l => ({ text: l.textContent?.trim() || '', forId: l.getAttribute('for') || '' }))
+      )
+
+      if (radioLabels.length === 0) continue
+
       try {
-        const payload = { job_id: jobId, question: questionText, user_id: userId }
+        const payload = {
+          job_id: jobId,
+          question: questionText,
+          user_id: userId,
+          options: radioLabels.map(l => l.text), // Give AI all available options
+        }
         const res = await fetch(`${API_BASE}/api/generate/answer`, {
           method: 'POST',
           headers: signRequest(payload),
           body: JSON.stringify(payload),
         })
-        if (!res.ok) throw new Error('AI answer API failed')
         const data = await res.json()
+
         if (data.answer) {
-          // Find radio option matching the answer (e.g. Yes/No)
-          const answerOption = await q.$(`label:text-is("${data.answer}"), input[value="${data.answer}"]`)
-          if (answerOption) {
-            await answerOption.click({ force: true }).catch(() => {})
-          }
+          // Fuzzy match: find the label that best matches AI answer
+          const answerLower = data.answer.toLowerCase()
+          const bestMatch = radioLabels.find(l => l.text.toLowerCase().includes(answerLower))
+            || radioLabels.find(l => answerLower.includes(l.text.toLowerCase()))
+            || radioLabels[0] // fallback to first option
+
+          const targetLabel = await q.$(`label[for="${bestMatch.forId}"]`)
+          if (targetLabel) await targetLabel.click({ force: true })
         }
-      } catch (err) {
-        console.log('⚠️ Failed to answer radio question via AI.')
+      } catch {
+        // Fallback: click first option (usually "Yes" / least-risky)
+        const firstLabel = await q.$('label')
+        if (firstLabel) await firstLabel.click({ force: true }).catch(() => {})
       }
       continue
     }
@@ -215,7 +238,8 @@ export async function handleMultiStep(
   userId?: string,
   jobMeta?: { title: string; company: string; description: string }
 ): Promise<'submitted' | 'captcha' | 'error'> {
-  const MAX_STEPS = 8
+  const MAX_STEPS = 15 // Safe upper bound; break early when Submit is found
+  let consecutiveNoProgress = 0
 
   for (let step = 0; step < MAX_STEPS; step++) {
     await humanDelay(1000, 2000)
@@ -267,24 +291,27 @@ export async function handleMultiStep(
     // Click "Next" or "Review" or "Continue"
     const nextBtn = await page.$('button:has-text("Next"), button:has-text("Review"), button:has-text("Continue"), button[aria-label*="next" i]')
     if (nextBtn) {
+      consecutiveNoProgress = 0
       await nextBtn.click()
       await humanDelay(1500, 3000)
       continue
     }
 
-    // No submit and no next — we're stuck
-    console.log(`⚠️ Stuck at step ${step + 1}`)
-    
-    // Attempt to dismiss "Discard application?" modal if it popped up somehow
-    const discardBtn = await page.$('button:has-text("Discard")')
-    if (discardBtn) {
-      console.log('Dismissing Discard modal...')
-      await discardBtn.click()
-      await humanDelay(1000, 2000)
-    }
+    consecutiveNoProgress++
+    if (consecutiveNoProgress >= 2) {
+      console.log(`⚠️ No progress for 2 consecutive steps — aborting at step ${step + 1}`)
+      
+      // Attempt to dismiss "Discard application?" modal if it popped up somehow
+      const discardBtn = await page.$('button:has-text("Discard")')
+      if (discardBtn) {
+        console.log('Dismissing Discard modal...')
+        await discardBtn.click()
+        await humanDelay(1000, 2000)
+      }
 
-    await takeScreenshot(page, `stuck-step-${step}`)
-    break
+      await takeScreenshot(page, `no-progress-step-${step}`)
+      break
+    }
   }
 
   return 'error'

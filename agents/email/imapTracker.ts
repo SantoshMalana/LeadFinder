@@ -60,15 +60,22 @@ export async function checkInboxForReplies() {
         .eq('reply_to_email', fromAddress) // exact match first
         .limit(1)
 
-      // Fallback: match by domain if no exact match
+      // Fallback: match by domain and subject if no exact match
       const { data: domainLeads } = !leads?.length ? await supabase
         .from('jobs')
         .select('id, user_id, title, company, status')
         .eq('source', 'email')
-        .ilike('reply_to_email', `%@${domain}`)
-        .limit(1) : { data: null }
+        .ilike('reply_to_email', `%@${domain}`) : { data: null }
 
-      const matchedLead = leads?.[0] || domainLeads?.[0]
+      let matchedLead = leads?.[0]
+      
+      if (!matchedLead && domainLeads && domainLeads.length > 0) {
+        const sub = (subject || '').toLowerCase()
+        matchedLead = domainLeads.find(l => {
+          const titleWords = l.title.toLowerCase().split(' ').filter((w: string) => w.length > 3)
+          return titleWords.some((w: string) => sub.includes(w)) || sub.includes(l.company.toLowerCase())
+        }) || domainLeads[0] // fallback to first if no subject match
+      }
 
       if (matchedLead) {
         console.log(`🎉 [IMAP] Match found! Recruiter ${fromAddress} replied to "${matchedLead.title}".`)

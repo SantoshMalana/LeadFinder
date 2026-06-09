@@ -3,6 +3,14 @@ import * as path from 'path'
 
 dotenv.config({ path: path.join(process.cwd(), '.env.local') })
 
+const exhaustedKeys = new Map<string, number>()
+
+export function markKeyExhausted(key: string, cooldownMs = 60000) {
+  if (!key) return
+  console.log(`[AI Key] Marking key starting with ${key.slice(0, 8)}... as exhausted for ${cooldownMs / 1000}s`)
+  exhaustedKeys.set(key, Date.now() + cooldownMs)
+}
+
 function getKeys(prefix: string): string[] {
   const keys: string[] = []
   // Check exact match (e.g. GROQ_API_KEY)
@@ -27,7 +35,15 @@ function getKeys(prefix: string): string[] {
     keys.push(...split)
   }
 
-  return Array.from(new Set(keys))
+  const now = Date.now()
+  const uniqueKeys = Array.from(new Set(keys))
+  const validKeys = uniqueKeys.filter(k => {
+    const exp = exhaustedKeys.get(k)
+    return !exp || now > exp
+  })
+
+  // Fallback to all keys if all are exhausted
+  return validKeys.length > 0 ? validKeys : uniqueKeys
 }
 
 export function getRandomGroqKey(): string {

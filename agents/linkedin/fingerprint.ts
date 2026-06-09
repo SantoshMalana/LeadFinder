@@ -23,10 +23,23 @@ const VIEWPORT_POOL = [
   { width: 2560, height: 1440 },
 ]
 
-const UA_POOL = [
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+const CHROME_VERSION_POOL = [
+  { major: 136, build: '136.0.7103.93' },
+  { major: 135, build: '135.0.7049.115' },
+  { major: 134, build: '134.0.6998.165' },
+]
+
+const PLATFORM_CONFIGS = [
+  {
+    platform: '"Windows"',
+    ua: (v: string) => `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${v} Safari/537.36`,
+    secChUa: (major: number) => `"Google Chrome";v="${major}", "Chromium";v="${major}", "Not-A.Brand";v="99"`,
+  },
+  {
+    platform: '"macOS"',
+    ua: (v: string) => `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${v} Safari/537.36`,
+    secChUa: (major: number) => `"Google Chrome";v="${major}", "Chromium";v="${major}", "Not-A.Brand";v="99"`,
+  },
 ]
 
 const LOCALE_POOL = [
@@ -43,11 +56,15 @@ export function generateFingerprint(sessionSeed?: string): BrowserFingerprint {
   const hash = crypto.createHash('sha256').update(seed).digest('hex')
   const idx = (n: number, max: number) => parseInt(hash.slice(n * 2, n * 2 + 2), 16) % max
 
+  const chromeVer = CHROME_VERSION_POOL[idx(0, CHROME_VERSION_POOL.length)]
+  const platformConf = PLATFORM_CONFIGS[idx(1, PLATFORM_CONFIGS.length)]
   const localeEntry = LOCALE_POOL[idx(2, LOCALE_POOL.length)]
 
   return {
-    viewport: VIEWPORT_POOL[idx(0, VIEWPORT_POOL.length)],
-    userAgent: UA_POOL[idx(1, UA_POOL.length)],
+    viewport: VIEWPORT_POOL[idx(3, VIEWPORT_POOL.length)],
+    userAgent: platformConf.ua(chromeVer.build),
+    secChUa: platformConf.secChUa(chromeVer.major),
+    platform: platformConf.platform,
     locale: localeEntry.locale,
     timezone: localeEntry.timezone,
     geolocation: {
@@ -55,11 +72,9 @@ export function generateFingerprint(sessionSeed?: string): BrowserFingerprint {
       longitude: localeEntry.geo.longitude + (Math.random() - 0.5) * 0.01,
     },
     acceptLanguage: `${localeEntry.locale},en;q=0.9`,
-    secChUa: '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-    platform: '"Windows"',
     canvasNoise: parseInt(hash.slice(4, 8), 16) % 10,
     webglVendor: 'Google Inc. (NVIDIA)',
-    webglRenderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 Direct3D11 vs_5_0 ps_5_0, D3D11)',
+    webglRenderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Direct3D11 vs_5_0 ps_5_0, D3D11)',
     audioNoise: parseInt(hash.slice(8, 12), 16) % 5,
   }
 }

@@ -1,5 +1,10 @@
 import { groq } from './groq'
 import type { ParsedCV, ScoreResult } from '@/types'
+import { Redis } from '@upstash/redis'
+import crypto from 'crypto'
+import { markKeyExhausted } from './aiKeys'
+
+const redis = Redis.fromEnv()
 
 /**
  * Score a Reddit post for freelance/hiring intent (extracted from 3 duplicate locations)
@@ -47,6 +52,13 @@ export async function scoreJobMatch(
   profile: ParsedCV,
   preferences?: { roles?: string[]; locations?: string[]; remote_preference?: string }
 ): Promise<ScoreResult & { should_apply: boolean }> {
+  const cacheKey = `job_match:${crypto.createHash('sha256').update(job.title + job.company + profile.name + (preferences?.roles?.join(',') || '')).digest('hex')}`
+  
+  try {
+    const cached = await redis.get<ScoreResult & { should_apply: boolean }>(cacheKey)
+    if (cached) return cached
+  } catch {}
+
   try {
     const res = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
@@ -78,6 +90,10 @@ Score 1-10:
 3-4: Weak — significant skill mismatch or overqualified/underqualified
 1-2: No match
 
+EXAMPLES:
+- Job: "Senior React Dev, 5+ yrs", Candidate: "Frontend Dev, 2 yrs React" -> {"score": 4, "reason": "Underqualified on experience.", "should_apply": false}
+- Job: "Full Stack Node/React", Candidate: "Full Stack Dev, 4 yrs Node/React" -> {"score": 9, "reason": "Perfect skill alignment.", "should_apply": true}
+
 JSON only: {"score": 8, "reason": "one sentence", "should_apply": true}`,
       }],
       response_format: { type: 'json_object' },
@@ -87,12 +103,22 @@ JSON only: {"score": 8, "reason": "one sentence", "should_apply": true}`,
 
     const content = res.choices?.[0]?.message?.content || '{}'
     const parsed = JSON.parse(content)
-    return {
+    const result = {
       score: Number(parsed.score) || 0,
       reason: parsed.reason || '',
       should_apply: parsed.should_apply ?? (Number(parsed.score) >= 7),
     }
-  } catch {
+
+    try {
+      await redis.set(cacheKey, result, { ex: 604800 }) // cache for 7 days
+    } catch {}
+
+    return result
+  } catch (err: any) {
+    if (err?.status === 429 && err?.headers) {
+       // Optional: we don't know exactly which key failed without intercepting, 
+       // but if we were storing it we could mark it. We'll rely on global rotation.
+    }
     return { score: 0, reason: 'scoring failed', should_apply: false }
   }
 }

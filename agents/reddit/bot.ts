@@ -39,12 +39,25 @@ if (!REDDIT_USER || !REDDIT_PASS || !USER_ID) {
 const SUBREDDITS = ['forhire', 'freelance', 'reactjs']
 const KEYWORDS = ['hiring', 'looking for', 'need a', 'developer', 'react', 'nextjs', 'full stack']
 
-// Circuit breaker — prevents rapid comments that trigger spam filters
-const COMMENT_COOLDOWN_MS = 10 * 60 * 1000  // 10 minutes min between comments
-const MAX_COMMENTS_PER_SESSION = 5           // Max 5 comments per run
-const MIN_KARMA_TO_COMMENT = 1               // Safety floor (account must have at least some karma)
-let lastCommentAt = 0
-let sessionCommentCount = 0
+// Redis-backed rate limiting
+const COOLDOWN_KEY = `reddit_cooldown:${USER_ID}`
+const DAILY_COUNT_KEY = `reddit_daily_count:${USER_ID}`
+const SEEN_POSTS_KEY = `reddit_seen:${USER_ID}`
+const LEADS_QUEUE_KEY = `reddit_leads_queue:${USER_ID}`
+
+async function canComment(): Promise<boolean> {
+  const isCooldown = await redis.get(COOLDOWN_KEY)
+  if (isCooldown) return false
+  const count = await redis.get<number>(DAILY_COUNT_KEY) || 0
+  if (count >= 5) return false
+  return true
+}
+
+async function markCommented() {
+  await redis.set(COOLDOWN_KEY, '1', { px: 10 * 60 * 1000 }) // 10 min
+  await redis.incr(DAILY_COUNT_KEY)
+  await redis.expire(DAILY_COUNT_KEY, 86400)
+}
 
 async function scoreLeadWithAI(postText: string): Promise<any> {
   const prompt = `Analyze this Reddit post and determine if it's someone hiring a freelance developer.
@@ -103,7 +116,6 @@ async function startRedditAgent() {
   log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n')
 
   const userDataDir = path.join(process.cwd(), '.leadfinder', 'reddit-profile')
-  const seenPosts = new Set<string>()
 
   while (true) {
     let browser: any = null
@@ -118,7 +130,6 @@ async function startRedditAgent() {
       log('🌐 Navigating to Reddit...')
       await page.goto('https://www.reddit.com/login/', { timeout: 30000 })
       
-      // Wait to see if we need to log in
       try {
         await page.waitForSelector('input[name="username"]', { timeout: 10000 })
         log('🔑 Logging in...')
@@ -131,35 +142,35 @@ async function startRedditAgent() {
         log('⏩ Already logged in or login form not found.')
       }
 
+      // --- PHASE 1: DISCOVERY ---
       for (const sub of SUBREDDITS) {
         log(`🔍 Scanning r/${sub}...`)
         try {
           await page.goto(`https://www.reddit.com/r/${sub}/new/`, { waitUntil: 'domcontentloaded', timeout: 30000 })
           await page.waitForTimeout(3000)
 
-          // Find post links
           const posts = await page.$$eval('a[slot="full-post-link"]', (links: any) => 
             links.map((l: any) => ({ url: l.href, id: l.href }))
           )
 
-          for (const post of posts.slice(0, 5)) { // Check top 5 new posts
-            if (seenPosts.has(post.id)) continue
+          for (const post of posts.slice(0, 5)) {
+            const isSeen = await redis.sismember(SEEN_POSTS_KEY, post.id)
+            if (isSeen) continue
             
-            // Check Supabase to see if we already processed this
             const { data: existingJob } = await supabase.from('jobs').select('id').eq('user_id', USER_ID).eq('job_url', post.url).limit(1)
             if (existingJob && existingJob.length > 0) {
-               seenPosts.add(post.id)
+               await redis.sadd(SEEN_POSTS_KEY, post.id)
                continue
             }
-            seenPosts.add(post.id)
+            await redis.sadd(SEEN_POSTS_KEY, post.id)
 
             await page.goto(post.url, { waitUntil: 'domcontentloaded', timeout: 30000 })
             await page.waitForTimeout(2000)
             
             const title = await page.title()
             const textContent = await page.evaluate(() => {
-              const post = document.querySelector('[data-test-id="post-content"], .Post, article, [slot="text-body"]')
-              return post?.textContent || ''
+              const postEl = document.querySelector('[data-test-id="post-content"], .Post, article, [slot="text-body"]')
+              return postEl?.textContent || ''
             })
             
             const isMatch = KEYWORDS.some(kw => title.toLowerCase().includes(kw) || textContent.toLowerCase().includes(kw))
@@ -172,59 +183,69 @@ async function startRedditAgent() {
               log(`   🎯 LEAD FOUND! (Score: ${analysis.score}/10)`)
               log(`   📌 ${analysis.summary}`)
               
-              // Try to comment
-              // ─── Circuit Breaker Check ───────────────────────────────
-              const msSinceLastComment = Date.now() - lastCommentAt
-              if (msSinceLastComment < COMMENT_COOLDOWN_MS) {
-                const waitSec = Math.round((COMMENT_COOLDOWN_MS - msSinceLastComment) / 1000)
-                log(`⏳ Rate limit: waiting ${waitSec}s before next comment...`)
-                await new Promise(r => setTimeout(r, COMMENT_COOLDOWN_MS - msSinceLastComment))
-              }
-
-              if (sessionCommentCount >= MAX_COMMENTS_PER_SESSION) {
-                log(`🛑 Session comment cap (${MAX_COMMENTS_PER_SESSION}) reached. Skipping further replies this run.`)
-                break
-              }
-              // ─────────────────────────────────────────────────────────
-
-              try {
-                log(`   ✍️ Writing reply...`)
-                const commentBox = await page.$('shreddit-composer div[contenteditable="true"], div[contenteditable="true"][role="textbox"]')
-                if (commentBox) {
-                  await commentBox.click()
-                  await page.keyboard.type(analysis.reply_draft, { delay: 50 })
-                  const submitBtn = await page.$('button[type="submit"]:has-text("Comment"), shreddit-composer button[slot="submit-button"]')
-                  if (submitBtn) {
-                    await submitBtn.click()
-                    lastCommentAt = Date.now()
-                    sessionCommentCount++
-                    log(`   ✅ Replied! (${sessionCommentCount}/${MAX_COMMENTS_PER_SESSION} this session)`)
-                  }
-
-                  await supabase.from('jobs').insert({
-                    user_id: USER_ID,
-                    source: 'reddit',
-                    source_id: `reddit_${post.id}`,
-                    company: 'Reddit Lead',
-                    title: analysis.summary?.substring(0, 100) || 'Reddit Opportunity',
-                    description: textContent.substring(0, 3000),
-                    job_url: post.url,
-                    match_score: analysis.score,
-                    match_reason: analysis.summary,
-                    status: 'applied',
-                    applied_at: new Date().toISOString(),
-                    discovered_at: new Date().toISOString(),
-                  })
-                } else {
-                  log(`   ⚠️ Comment box not found (Thread locked?)`)
-                }
-              } catch (replyErr: any) {
-                log(`   ⚠️ Failed to reply: ${replyErr.message}`)
-              }
+              // Queue for interaction instead of commenting immediately
+              await redis.rpush(LEADS_QUEUE_KEY, JSON.stringify({ post, analysis, textContent }))
+              log(`   📥 Queued lead for interaction phase.`)
             }
           }
         } catch (err: any) {
           log(`⚠️ Error scanning r/${sub}: ${err.message}`)
+        }
+      }
+
+      // --- PHASE 2: INTERACTION ---
+      log('🤖 Processing Interaction Queue...')
+      while (true) {
+        if (!(await canComment())) {
+          log(`⏳ Rate limit reached. Stopping interaction phase for now.`)
+          break
+        }
+
+        const raw = await redis.lpop<string>(LEADS_QUEUE_KEY)
+        if (!raw) break // queue empty
+
+        let queuedLead: any
+        try { queuedLead = typeof raw === 'string' ? JSON.parse(raw) : raw } catch { continue }
+
+        const { post, analysis, textContent } = queuedLead
+        
+        try {
+          await page.goto(post.url, { waitUntil: 'domcontentloaded', timeout: 30000 })
+          await page.waitForTimeout(2000)
+
+          log(`   ✍️ Writing reply to ${post.url}...`)
+          const commentBox = await page.$('shreddit-composer div[contenteditable="true"], div[contenteditable="true"][role="textbox"]')
+          if (commentBox) {
+            await commentBox.click()
+            await page.keyboard.type(analysis.reply_draft, { delay: 50 })
+            const submitBtn = await page.$('button[type="submit"]:has-text("Comment"), shreddit-composer button[slot="submit-button"]')
+            if (submitBtn) {
+              await submitBtn.click()
+              await markCommented()
+              const count = await redis.get(DAILY_COUNT_KEY)
+              log(`   ✅ Replied! (${count}/5 today)`)
+            }
+
+            await supabase.from('jobs').insert({
+              user_id: USER_ID,
+              source: 'reddit',
+              source_id: `reddit_${post.id}`,
+              company: 'Reddit Lead',
+              title: analysis.summary?.substring(0, 100) || 'Reddit Opportunity',
+              description: textContent.substring(0, 3000),
+              job_url: post.url,
+              match_score: analysis.score,
+              match_reason: analysis.summary,
+              status: 'applied',
+              applied_at: new Date().toISOString(),
+              discovered_at: new Date().toISOString(),
+            })
+          } else {
+            log(`   ⚠️ Comment box not found (Thread locked?)`)
+          }
+        } catch (replyErr: any) {
+          log(`   ⚠️ Failed to reply: ${replyErr.message}`)
+          // Optionally push back to queue on error, but we'll skip to avoid infinite loops
         }
       }
     } catch (criticalErr: any) {
