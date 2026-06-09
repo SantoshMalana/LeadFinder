@@ -157,6 +157,10 @@ export default function PreferencesForm({ userId, existing }: {
         </div>
       </div>
 
+      <div style={{ marginTop: 20, padding: 12, borderRadius: 8, background: 'var(--accent-subtle)', border: '1px solid var(--accent)', fontSize: 12, color: 'var(--accent-fg)' }}>
+        <strong>💡 Pro Tip:</strong> A residential proxy is highly recommended if you enable aggressive Auto-Apply to avoid LinkedIn IP bans. Configure it in your <code>.env.local</code>.
+      </div>
+
       {/* Job Types */}
       <div style={{ marginTop: 16 }}>
         <label style={labelStyle}>Job Types</label>
