@@ -115,7 +115,7 @@ Return ONLY the text of the proposal. Keep it short, focused on results, and sta
         }
       }
 
-      await supabase.from('jobs').insert({
+      const { data: savedJob, error: insertError } = await supabase.from('jobs').insert({
         user_id: USER_ID,
         source: 'upwork',
         source_id: `upwork_${jobId}`,
@@ -128,10 +128,24 @@ Return ONLY the text of the proposal. Keep it short, focused on results, and sta
         match_reason: matchReason,
         status: 'discovered',
         discovered_at: new Date().toISOString(),
-        generated_content: { cover_letter: proposalDraft },
-      })
+      }).select().single()
 
-      console.log(`✅ Saved Upwork job (score: ${matchScore}/10) and proposal draft to DB!`)
+      if (insertError) {
+        console.error('❌ Failed to insert Upwork job:', insertError.message)
+        continue
+      }
+
+      // Save proposal draft to generated_content table
+      if (savedJob && proposalDraft) {
+        await supabase.from('generated_content').insert({
+          job_id: savedJob.id,
+          content_type: 'cover_letter',
+          question: null,
+          answer: proposalDraft,
+        })
+      }
+
+      console.log(`✅ Saved Upwork job (score: ${matchScore}/10) and proposal draft!`)
     }
 
   } catch (error) {

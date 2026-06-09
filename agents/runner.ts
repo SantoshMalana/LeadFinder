@@ -96,6 +96,16 @@ export async function startAutoApply(config: AgentConfig) {
       console.log('✅ LinkedIn login detected!')
     }
 
+    let cachedProfile: ParsedCV | null = null
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('parsed_data')
+        .eq('user_id', config.user_id)
+        .single()
+      cachedProfile = data?.parsed_data || null
+    } catch { /* keep null */ }
+
     // Main loop — search for each role
     for (const role of config.roles) {
       if (appliedCount >= config.max_daily) break
@@ -123,17 +133,11 @@ export async function startAutoApply(config: AgentConfig) {
         }
 
         let matchData
+        let details: any = {}
         try {
           // Fetch job description for persona selection
-          const details = await getJobDetails(page, listing.job_url)
+          details = await getJobDetails(page, listing.job_url)
           const persona = await selectPersona(listing.title, details.description || '')
-
-          // Fetch user profile
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('parsed_data')
-            .eq('user_id', config.user_id)
-            .single()
 
           // Score job using internal API (with HMAC)
           const payload = JSON.stringify({
@@ -144,7 +148,7 @@ export async function startAutoApply(config: AgentConfig) {
             job_url: listing.job_url,
             user_id: config.user_id,
             persona_used: persona,
-            cv_version: profile?.parsed_data?.last_updated || 'v1',
+            cv_version: (cachedProfile as any)?.last_updated || 'v1',
             description: details.description || ''
           })
           
@@ -180,8 +184,7 @@ export async function startAutoApply(config: AgentConfig) {
             break
           }
 
-          // Get full details
-          const details = await getJobDetails(page, listing.job_url)
+          // Reuse details from pre-match fetch (line 138) — no second page load needed
 
           // Log the attempt
           await logAction(matchData.job_id, 'page_opened', { url: listing.job_url })
@@ -200,10 +203,13 @@ export async function startAutoApply(config: AgentConfig) {
           }
           await logAction(matchData.job_id, 'form_detected', {})
 
-          // Get profile for form filling
+          // Get profile for form filling (signed request)
           let statusData: any = {}
           try {
-            const profileRes = await fetch(`${API_BASE}/api/autoapply/status?user_id=${config.user_id}`)
+            const statusPayload = `user_id=${config.user_id}`
+            const profileRes = await fetch(`${API_BASE}/api/autoapply/status?user_id=${config.user_id}`, {
+              headers: signRequest(statusPayload)
+            })
             if (profileRes.ok) statusData = await profileRes.json()
           } catch {}
 
@@ -216,8 +222,12 @@ export async function startAutoApply(config: AgentConfig) {
           }
 
           // Use actual profile from earlier match if available
-          const profileToUse = statusData?.parsed_data || dummyProfile
-          const result = await handleMultiStep(page, profileToUse, matchData.job_id, config.user_id)
+          const profileToUse = statusData?.parsed_data || cachedProfile || dummyProfile
+          const result = await handleMultiStep(page, profileToUse, matchData.job_id, config.user_id, {
+            title: listing.title,
+            company: listing.company,
+            description: details.description || ''
+          })
 
           if (result === 'submitted') {
             appliedCount++
@@ -271,7 +281,7 @@ async function updateJobStatus(jobId: string, status: string, failureReason?: st
   try {
     const updateData: any = { status }
     if (status === 'applied') updateData.applied_at = new Date().toISOString()
-    if (failureReason) updateData.match_reason = failureReason
+    if (failureReason) updateData.failure_reason = failureReason
 
     await supabase.from('jobs').update(updateData).eq('id', jobId)
   } catch {}
@@ -279,18 +289,15 @@ async function updateJobStatus(jobId: string, status: string, failureReason?: st
 
 async function logAction(jobId: string, action: string, details: Record<string, unknown>) {
   try {
-    const supabase = (await import('@supabase/supabase-js')).createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
-    
     await supabase.from('application_log').insert({
       job_id: jobId,
       action: action,
       details: details,
     })
     console.log(`📝 Log: ${action} for job ${jobId.slice(0, 8)}...`)
-  } catch {}
+  } catch (err) {
+    console.error('logAction failed:', err)
+  }
 }
 
 // ─── CLI Entry Point ────────────────────────────────────────────
@@ -301,15 +308,18 @@ if (require.main === module) {
     process.exit(1)
   }
 
-  // Fetch config from API
-  fetch(`${API_BASE}/api/autoapply/status?user_id=${userId}`)
+  const payload = `user_id=${userId}`
+  fetch(`${API_BASE}/api/autoapply/status?user_id=${userId}`, {
+    headers: signRequest(payload),
+  })
     .then(r => r.json())
     .then(data => {
+      if (data.error) throw new Error(`Status API error: ${data.error}`)
       startAutoApply({
         user_id: userId,
         max_daily: data.today_limit || 25,
-        threshold: 7, // FORCED TO 7 FOR TESTING
-        roles: ['Full Stack Developer', 'React Developer', 'Frontend Developer'],
+        threshold: data.threshold || 7,
+        roles: data.queued_jobs?.map((j: any) => j.title).filter(Boolean).slice(0, 5) || ['Full Stack Developer', 'React Developer', 'Frontend Developer'],
         locations: ['Remote', ''],
       })
     })

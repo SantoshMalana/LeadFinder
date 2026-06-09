@@ -1,9 +1,15 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, SupabaseClient } from '@supabase/supabase-js'
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+let _db: SupabaseClient | null = null
+function getDb(): SupabaseClient {
+  if (!_db) {
+    _db = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
+  }
+  return _db
+}
 
 interface RejectionData {
   user_id: string
@@ -15,7 +21,7 @@ interface RejectionData {
  * Record an application outcome for the learning engine
  */
 export async function recordOutcome(data: RejectionData) {
-  const { data: job } = await supabase
+  const { data: job } = await getDb()
     .from('jobs')
     .select('source, persona_used, cv_version, job_type, company')
     .eq('id', data.job_id)
@@ -33,7 +39,7 @@ export async function recordOutcome(data: RejectionData) {
 
   // Use the atomic RPC (requires schema_v2_patch.sql to be executed)
   await Promise.all(patterns.map(pattern => 
-    supabase.rpc('increment_rejection_pattern', {
+    getDb().rpc('increment_rejection_pattern', {
       p_user_id: data.user_id,
       p_pattern_type: pattern.type,
       p_pattern_value: pattern.value,
@@ -46,7 +52,7 @@ export async function recordOutcome(data: RejectionData) {
  * Get insights from rejection patterns
  */
 export async function getInsights(userId: string) {
-  const { data: patterns } = await supabase
+  const { data: patterns } = await getDb()
     .from('rejection_patterns')
     .select('*')
     .eq('user_id', userId)
@@ -103,7 +109,7 @@ export async function markSilentRejections(userId: string) {
   const sevenDaysAgo = new Date()
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
 
-  const { data: staleJobs } = await supabase
+  const { data: staleJobs } = await getDb()
     .from('jobs')
     .select('id')
     .eq('user_id', userId)
@@ -119,7 +125,7 @@ export async function markSilentRejections(userId: string) {
 
   // Batch update all jobs
   const jobIds = staleJobs.map(j => j.id)
-  await supabase
+  await getDb()
     .from('jobs')
     .update({ status: 'rejected', failure_reason: 'No response after 7 days' })
     .in('id', jobIds)

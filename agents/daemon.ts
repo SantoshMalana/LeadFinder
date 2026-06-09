@@ -10,12 +10,7 @@ dotenv.config({ path: path.join(process.cwd(), '.env.local') })
 
 validateEnv('daemon')
 
-if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-  console.error('[Daemon] Missing Supabase credentials in .env.local')
-  process.exit(1)
-}
-
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
 
 // Map to keep track of running processes per user
 const activeAgents: Record<string, ChildProcess[]> = {}

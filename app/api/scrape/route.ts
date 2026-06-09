@@ -59,19 +59,11 @@ async function processCampaign(
 
 export async function POST(req: NextRequest) {
   try {
-    const isCron = req.headers.get('user-agent') === 'Inngest Server'
-    const inngestSig = req.headers.get('x-inngest-signature')
-    
-    let isAuthorized = false
-    if (isCron && inngestSig) {
-      isAuthorized = true
-    } else {
-      const authClient = await createAuthClient()
-      const { data: { user } } = await authClient.auth.getUser()
-      if (user) isAuthorized = true
-    }
-
-    if (!isAuthorized) {
+    // Only allow authenticated users — Inngest functions call scrapers directly,
+    // they don't need to go through this HTTP endpoint
+    const authClient = await createAuthClient()
+    const { data: { user } } = await authClient.auth.getUser()
+    if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
@@ -80,9 +72,11 @@ export async function POST(req: NextRequest) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
 
+    // Scope to this user's campaigns only — not all global campaigns
     const { data: campaigns } = await supabase
       .from('campaigns')
       .select('*')
+      .eq('user_id', user.id)
       .eq('is_active', true)
 
     if (!campaigns?.length) {

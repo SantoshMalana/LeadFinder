@@ -212,7 +212,8 @@ export async function handleMultiStep(
   page: Page,
   profile: ParsedCV,
   jobId: string,
-  userId?: string
+  userId?: string,
+  jobMeta?: { title: string; company: string; description: string }
 ): Promise<'submitted' | 'captcha' | 'error'> {
   const MAX_STEPS = 8
 
@@ -238,7 +239,12 @@ export async function handleMultiStep(
        try {
          // Get job details from the page or pass it down. We'll extract a bit of context here.
          const jobContext = await page.evaluate(() => document.querySelector('.jobs-description-content')?.textContent || 'Software Developer')
-         const pdfPath = await generateCoverLetter(profile, jobContext.substring(0, 500))
+         const pdfPath = await generateCoverLetter(
+           profile,
+           jobContext.substring(0, 500),
+           jobMeta?.title,
+           jobMeta?.company
+         )
          await uploadResume(page, pdfPath)
        } catch (err) {
          console.error('⚠️ Failed to attach cover letter:', err)

@@ -1,9 +1,16 @@
-import { Redis } from '@upstash/redis'
+import type { Redis } from '@upstash/redis'
 import { flashModel } from './gemini'
 import { groq } from './groq'
 import type { ParsedCV, Job } from '@/types'
 
-const redis = Redis.fromEnv()
+let _redis: import('@upstash/redis').Redis | null = null
+function getRedis() {
+  if (!_redis) {
+    const { Redis } = require('@upstash/redis')
+    _redis = Redis.fromEnv()
+  }
+  return _redis!
+}
 
 /**
  * Generate a tailored cover letter for a specific job
@@ -59,7 +66,7 @@ export async function generateScreeningAnswer(
 ): Promise<string> {
   // Try cache first
   const cacheKey = `ans:${jobId || 'global'}:${Buffer.from(question).toString('base64').slice(0, 32)}`
-  const cached = await redis.get<string>(cacheKey)
+  const cached = await getRedis().get<string>(cacheKey)
   if (cached) return cached
 
   const res = await groq.chat.completions.create({
@@ -91,7 +98,7 @@ Answer only, nothing else.`,
   
   // Cache for 24 hours
   if (answer) {
-    await redis.setex(cacheKey, 86400, answer)
+    await getRedis().setex(cacheKey, 86400, answer)
   }
 
   return answer

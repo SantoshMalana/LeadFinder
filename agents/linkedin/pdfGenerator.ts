@@ -8,10 +8,15 @@ import { tailorResumeSummary } from '../../lib/cover-letter'
 
 dotenv.config({ path: path.join(process.cwd(), '.env.local') })
 
-export async function generateCoverLetter(profile: ParsedCV, jobDetails: string): Promise<string> {
+export async function generateCoverLetter(
+  profile: ParsedCV,
+  jobDetails: string,
+  jobTitle: string = 'Software Engineer',
+  company: string = 'the company'
+): Promise<string> {
   console.log('🧠 Tailoring resume summary...')
   const tailoredSummary = await tailorResumeSummary(
-    { title: 'Software Engineer', company: 'Hiring Company', description: jobDetails },
+    { title: jobTitle, company: company, description: jobDetails },
     profile
   )
 
