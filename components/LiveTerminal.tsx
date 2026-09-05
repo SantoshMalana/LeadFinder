@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 
 interface LiveTerminalProps {
   type: 'agent' | 'telegram'
@@ -9,39 +9,66 @@ interface LiveTerminalProps {
   onClose: () => void
 }
 
+const BASE_POLL_MS = 2_000
+const MAX_POLL_MS = 30_000
+
 export default function LiveTerminal({ isOpen, onClose, type: initialType, userId }: LiveTerminalProps) {
   const [logs, setLogs] = useState<string[]>([])
   const [source, setSource] = useState<'agent' | 'telegram'>(initialType)
   const terminalEndRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
-  const isPollingRef = useRef(false)
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'degraded' | 'offline'>('connected')
 
   useEffect(() => {
     if (!isOpen || !userId) return
     let timeoutId: NodeJS.Timeout
+    let consecutiveFailures = 0
 
     const fetchLogs = async () => {
       try {
-        isPollingRef.current = true
         const res = await fetch(`/api/logs?type=${source}&limit=50&user_id=${userId}`, { cache: 'no-store' })
+
         if (!res.ok) {
-          setLogs(prev => [...prev, `> Failed to fetch logs (Status: ${res.status})`])
-          return
+          consecutiveFailures++
+          if (consecutiveFailures === 1) {
+            // Only append the error message once, not on every failure
+            setLogs(prev => [...prev, `> Log store unreachable (Status: ${res.status}). Retrying with backoff...`])
+          }
+          setConnectionStatus('offline')
+        } else {
+          const data = await res.json()
+
+          // Check if the API reported Redis as unavailable (still returns 200)
+          if (data.status === 'unavailable' || data.status === 'error') {
+            if (consecutiveFailures === 0) {
+              setLogs(typeof data.logs === 'string' ? [data.logs] : ['Log store offline.'])
+            }
+            consecutiveFailures++
+            setConnectionStatus('degraded')
+          } else {
+            // Successful fetch — reset backoff
+            consecutiveFailures = 0
+            setConnectionStatus('connected')
+
+            if (typeof data.logs === 'string') {
+              setLogs(data.logs.split('\n').filter(Boolean))
+            } else if (Array.isArray(data.logs)) {
+              setLogs(data.logs.map((l: unknown) => typeof l === 'string' ? l : JSON.stringify(l)))
+            }
+          }
         }
-        const data = await res.json()
-        // API returns { logs: "line1\nline2..." }
-        if (typeof data.logs === 'string') {
-          setLogs(data.logs.split('\n').filter(Boolean))
-        } else if (Array.isArray(data.logs)) {
-          setLogs(data.logs.map((l: any) => typeof l === 'string' ? l : JSON.stringify(l)))
+      } catch {
+        consecutiveFailures++
+        if (consecutiveFailures === 1) {
+          setLogs(prev => [...prev, '> Connection lost. Retrying with backoff...'])
         }
-      } catch (err) {
-        setLogs(prev => [...prev, '> Connection lost. Retrying...'])
-      } finally {
-        isPollingRef.current = false
-        timeoutId = setTimeout(fetchLogs, 2000)
+        setConnectionStatus('offline')
       }
+
+      // Exponential backoff: 2s → 4s → 8s → 16s → 30s (capped)
+      const delay = Math.min(BASE_POLL_MS * Math.pow(2, consecutiveFailures), MAX_POLL_MS)
+      timeoutId = setTimeout(fetchLogs, delay)
     }
 
     fetchLogs()
@@ -54,14 +81,25 @@ export default function LiveTerminal({ isOpen, onClose, type: initialType, userI
     }
   }, [logs, autoScroll])
 
-  const handleScroll = () => {
+  const handleScroll = useCallback(() => {
     if (!containerRef.current) return
     const { scrollTop, scrollHeight, clientHeight } = containerRef.current
     const isAtBottom = scrollHeight - scrollTop - clientHeight < 50
     setAutoScroll(isAtBottom)
-  }
+  }, [])
 
   if (!isOpen) return null
+
+  const statusColors = {
+    connected: 'bg-green-500',
+    degraded: 'bg-yellow-500',
+    offline: 'bg-red-500',
+  }
+  const statusLabels = {
+    connected: 'Live Agent Pipeline',
+    degraded: 'Log Store Offline — Retrying',
+    offline: 'Disconnected — Retrying',
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4 transition-all">
@@ -77,10 +115,12 @@ export default function LiveTerminal({ isOpen, onClose, type: initialType, userI
             </div>
             <span className="text-xs font-mono text-gray-400 ml-2 flex items-center gap-2">
               <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                {connectionStatus === 'connected' && (
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                )}
+                <span className={`relative inline-flex rounded-full h-2 w-2 ${statusColors[connectionStatus]}`}></span>
               </span>
-              Live Agent Pipeline
+              {statusLabels[connectionStatus]}
             </span>
           </div>
 
@@ -118,13 +158,16 @@ export default function LiveTerminal({ isOpen, onClose, type: initialType, userI
           onScroll={handleScroll}
           className="flex-1 overflow-y-auto p-4 font-mono text-sm whitespace-pre-wrap text-[#00ff00] bg-[#0c0c0c] custom-scrollbar"
         >
+          {logs.length === 0 && (
+            <div className="text-gray-600">Waiting for logs...</div>
+          )}
           {logs.map((line, i) => (
             <div key={i}>{line}</div>
           ))}
           <div ref={terminalEndRef} />
         </div>
         
-        {/* Status Bar */}
+        {/* Scroll-to-bottom button */}
         {!autoScroll && (
           <div className="absolute bottom-6 left-1/2 -translate-x-1/2">
             <button 
