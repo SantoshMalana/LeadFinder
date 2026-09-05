@@ -2,12 +2,17 @@ import type { Page } from 'playwright'
 import { humanDelay, humanClick, takeScreenshot } from './browser'
 import { humanTypeText } from './humanTyping'
 import { PlatformCircuitBreaker } from './circuitBreaker'
-import { generateCoverLetter } from './pdfGenerator'
+import { generateCoverLetter as generateCoverLetterPdf } from './pdfGenerator'
 import { solveCaptcha } from './captchaSolver'
-import { signRequest } from '../../lib/sign'
+import { generateScreeningAnswer } from '../../lib/cover-letter'
 import type { ParsedCV } from '../../types'
+import { createClient } from '@supabase/supabase-js'
 
-const API_BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+// Direct DB access — no more localhost API calls
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+)
 
 /**
  * Click the Easy Apply button on a LinkedIn job page
@@ -94,11 +99,14 @@ export async function fillEasyApplyForm(page: Page, profile: ParsedCV): Promise<
 }
 
 /**
- * Handle screening questions using AI
+ * Handle screening questions using AI — calls scoring/generation DIRECTLY,
+ * no localhost API needed.
  */
 export async function handleScreeningQuestion(
   page: Page,
+  profile: ParsedCV,
   jobId: string,
+  jobMeta: { title: string; company: string; description: string },
   userId?: string
 ): Promise<void> {
   const questions = await page.$$('.jobs-easy-apply-form-section__grouping, .fb-dash-form-element')
@@ -117,14 +125,12 @@ export async function handleScreeningQuestion(
 
     // Handle standalone radio groups (e.g. Yes/No questions)
     if (radioInputs.length > 0) {
-      // Check if any is already checked
       let isChecked = false
       for (const radio of radioInputs) {
         if (await radio.isChecked()) isChecked = true
       }
       if (isChecked) continue
 
-      // Get all available labels
       const radioLabels = await q.$$eval(
         'label',
         (labels) => labels.map(l => ({ text: l.textContent?.trim() || '', forId: l.getAttribute('for') || '' }))
@@ -133,34 +139,40 @@ export async function handleScreeningQuestion(
       if (radioLabels.length === 0) continue
 
       try {
-        const payload = {
-          job_id: jobId,
-          question: questionText,
-          user_id: userId,
-          options: radioLabels.map(l => l.text), // Give AI all available options
-        }
-        const res = await fetch(`${API_BASE}/api/generate/answer`, {
-          method: 'POST',
-          headers: signRequest(payload),
-          body: JSON.stringify(payload),
-        })
-        const data = await res.json()
+        // ✅ Direct call — no localhost fetch
+        const answer = await generateScreeningAnswer(
+          questionText + '\nOptions: ' + radioLabels.map(l => l.text).join(', '),
+          jobMeta,
+          profile,
+          jobId
+        )
 
-        if (data.answer) {
-          // Fuzzy match: find the label that best matches AI answer
-          const answerLower = data.answer.toLowerCase()
+        if (answer) {
+          const answerLower = answer.toLowerCase().trim()
           const bestMatch = radioLabels.find(l => l.text.toLowerCase().includes(answerLower))
             || radioLabels.find(l => answerLower.includes(l.text.toLowerCase()))
-            || radioLabels[0] // fallback to first option
+            || radioLabels[0]
 
           const targetLabel = await q.$(`label[for="${bestMatch.forId}"]`)
           if (targetLabel) await targetLabel.click({ force: true })
+          console.log(`   📝 Radio "${questionText}" → "${bestMatch.text}"`)
         }
       } catch {
-        // Fallback: click first option (usually "Yes" / least-risky)
+        // Fallback: click first option (usually "Yes")
         const firstLabel = await q.$('label')
         if (firstLabel) await firstLabel.click({ force: true }).catch(() => {})
       }
+
+      // Save generated answer
+      try {
+        await supabase.from('generated_content').insert({
+          job_id: jobId,
+          content_type: 'answer',
+          question: questionText,
+          answer: radioLabels[0]?.text || 'fallback',
+        })
+      } catch {}
+
       continue
     }
 
@@ -172,31 +184,38 @@ export async function handleScreeningQuestion(
       const val = await inputEl.inputValue().catch(() => '')
       if (val) continue
 
-      // For text inputs — call AI to generate answer
       try {
-        const payload = { job_id: jobId, question: questionText, user_id: userId }
-        const res = await fetch(`${API_BASE}/api/generate/answer`, {
-          method: 'POST',
-          headers: signRequest(payload),
-          body: JSON.stringify(payload),
-        })
-        if (!res.ok) throw new Error('AI answer API failed')
-        const data = await res.json()
-        if (data.answer) {
-          await inputEl.fill(data.answer)
-        } else {
-          // AI returned no answer — use a safe fallback for text inputs
+        // ✅ Direct call — no localhost fetch
+        const answer = await generateScreeningAnswer(
+          questionText,
+          jobMeta,
+          profile,
+          jobId
+        )
+        
+        if (answer) {
+          await inputEl.fill(answer)
+          console.log(`   📝 Text "${questionText.substring(0, 40)}..." → "${answer.substring(0, 50)}..."`)
+
+          // Save to DB
           try {
-            if (tagName === 'input' || tagName === 'textarea') {
-              await inputEl.fill('N/A')
-            }
-            // For radios, skip silently to avoid invalidating the form
-          } catch (fallbackErr) {
-            console.log('⚠️ Failed to apply fallback value to input.')
-          }
+            await supabase.from('generated_content').insert({
+              job_id: jobId,
+              content_type: 'answer',
+              question: questionText,
+              answer: answer,
+            })
+          } catch {}
+        } else {
+          // Fallback for empty answers
+          try {
+            await inputEl.fill('N/A')
+          } catch {}
         }
-      } catch (err) {
-        console.error(`⚠️ Failed to answer: "${questionText}"`, err)
+      } catch (err: any) {
+        console.error(`⚠️ Failed to answer: "${questionText}"`, err?.message)
+        // Fill with N/A rather than leaving blank (which blocks form submission)
+        try { await inputEl.fill('N/A') } catch {}
       }
     }
 
@@ -212,7 +231,6 @@ export async function uploadResume(page: Page, resumePath: string): Promise<bool
     const fileInputs = await page.$$('input[type="file"]')
     let uploaded = false
     for (const input of fileInputs) {
-       // Just upload to the first available file input if not specified
        await input.setInputFiles(resumePath)
        uploaded = true
        break
@@ -238,8 +256,9 @@ export async function handleMultiStep(
   userId?: string,
   jobMeta?: { title: string; company: string; description: string }
 ): Promise<'submitted' | 'captcha' | 'error'> {
-  const MAX_STEPS = 15 // Safe upper bound; break early when Submit is found
+  const MAX_STEPS = 15
   let consecutiveNoProgress = 0
+  const meta = jobMeta || { title: 'Unknown', company: 'Unknown', description: '' }
 
   for (let step = 0; step < MAX_STEPS; step++) {
     await humanDelay(1000, 2000)
@@ -261,23 +280,23 @@ export async function handleMultiStep(
     if (fileInputText.toLowerCase().includes('cover letter') && !fileInputText.toLowerCase().includes('no cover letter') && await page.$('input[type="file"]')) {
        console.log('📝 Cover letter requested! Generating dynamic PDF...')
        try {
-         // Get job details from the page or pass it down. We'll extract a bit of context here.
          const jobContext = await page.evaluate(() => document.querySelector('.jobs-description-content')?.textContent || 'Software Developer')
-         const pdfPath = await generateCoverLetter(
+         const pdfPath = await generateCoverLetterPdf(
            profile,
            jobContext.substring(0, 500),
-           jobMeta?.title,
-           jobMeta?.company
+           meta.title,
+           meta.company
          )
          await uploadResume(page, pdfPath)
-       } catch (err) {
-         console.error('⚠️ Failed to attach cover letter:', err)
+       } catch (err: any) {
+         console.error('⚠️ Failed to attach cover letter:', err?.message)
        }
     }
 
     // Fill any visible form fields
     await fillEasyApplyForm(page, profile)
-    await handleScreeningQuestion(page, jobId, userId)
+    // ✅ FIX: pass profile and jobMeta directly instead of fetching from localhost
+    await handleScreeningQuestion(page, profile, jobId, meta, userId)
 
     // Check for Submit button
     const submitBtn = await page.$('button:has-text("Submit application"), button:has-text("Submit"), button[aria-label*="Submit"]')
@@ -301,7 +320,6 @@ export async function handleMultiStep(
     if (consecutiveNoProgress >= 2) {
       console.log(`⚠️ No progress for 2 consecutive steps — aborting at step ${step + 1}`)
       
-      // Attempt to dismiss "Discard application?" modal if it popped up somehow
       const discardBtn = await page.$('button:has-text("Discard")')
       if (discardBtn) {
         console.log('Dismissing Discard modal...')

@@ -6,8 +6,12 @@ import type { ParsedCV, Job } from '@/types'
 let _redis: import('@upstash/redis').Redis | null = null
 function getRedis() {
   if (!_redis) {
-    const { Redis } = require('@upstash/redis')
-    _redis = Redis.fromEnv()
+    try {
+      const { Redis } = require('@upstash/redis')
+      _redis = Redis.fromEnv()
+    } catch {
+      return null
+    }
   }
   return _redis!
 }
@@ -56,7 +60,8 @@ Cover letter only, no subject line or formatting instructions.`)
 }
 
 /**
- * Generate an answer to a screening question
+ * Generate an answer to a screening question.
+ * Tries Groq first, falls back to Gemini if Groq is rate-limited.
  */
 export async function generateScreeningAnswer(
   question: string,
@@ -65,19 +70,21 @@ export async function generateScreeningAnswer(
   jobId?: string
 ): Promise<string> {
   // Try cache first
+  const redis = getRedis()
   const cacheKey = `ans:${jobId || 'global'}:${Buffer.from(question).toString('base64').slice(0, 32)}`
-  const cached = await getRedis().get<string>(cacheKey)
-  if (cached) return cached
+  
+  if (redis) {
+    try {
+      const cached = await redis.get<string>(cacheKey)
+      if (cached) return cached
+    } catch {}
+  }
 
-  const res = await groq.chat.completions.create({
-    model: 'llama-3.3-70b-versatile',
-    messages: [{
-      role: 'user',
-      content: `You are helping a job candidate answer a screening question on a job application.
+  const prompt = `You are helping a job candidate answer a screening question on a job application.
 
 CANDIDATE PROFILE:
 Name: ${profile.name}
-Skills: ${[...profile.skills.languages, ...profile.skills.frameworks, ...profile.skills.tools].join(', ')}
+Skills: ${[...(profile.skills?.languages || []), ...(profile.skills?.frameworks || []), ...(profile.skills?.tools || [])].join(', ')}
 Experience: ${profile.years_of_experience} years
 Recent role: ${profile.experience[0]?.title || 'N/A'} at ${profile.experience[0]?.company || 'N/A'}
 Education: ${profile.education[0]?.degree || 'N/A'} in ${profile.education[0]?.field || 'N/A'}
@@ -88,17 +95,38 @@ SCREENING QUESTION: ${question}
 
 Write a concise, honest answer (2-4 sentences). Be specific, reference real skills/experience from the profile. Sound natural and confident.
 
-Answer only, nothing else.`,
-    }],
-    temperature: 0.3,
-    max_tokens: 200,
-  })
+Answer only, nothing else.`
 
-  const answer = res.choices[0].message.content || ''
-  
+  let answer = ''
+
+  // ── Attempt 1: Groq ──
+  try {
+    const res = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.3,
+      max_tokens: 200,
+    })
+    answer = res.choices[0].message.content || ''
+  } catch (groqErr: any) {
+    console.log(`[ScreeningAnswer] Groq failed (${groqErr?.status || groqErr?.message}), trying Gemini...`)
+  }
+
+  // ── Attempt 2: Gemini ──
+  if (!answer) {
+    try {
+      const result = await flashModel.generateContent(prompt)
+      answer = result.response.text().trim()
+    } catch (geminiErr: any) {
+      console.error(`[ScreeningAnswer] Gemini also failed:`, geminiErr?.message)
+    }
+  }
+
   // Cache for 24 hours
-  if (answer) {
-    await getRedis().setex(cacheKey, 86400, answer)
+  if (answer && redis) {
+    try {
+      await redis.setex(cacheKey, 86400, answer)
+    } catch {}
   }
 
   return answer
@@ -111,11 +139,13 @@ export async function tailorResumeSummary(
   job: Pick<Job, 'title' | 'company' | 'description'>,
   profile: ParsedCV
 ): Promise<string> {
-  const res = await groq.chat.completions.create({
-    model: 'llama-3.3-70b-versatile',
-    messages: [{
-      role: 'user',
-      content: `Rewrite this professional summary to better target a "${job.title}" role at ${job.company}.
+  // Try Groq first
+  try {
+    const res = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [{
+        role: 'user',
+        content: `Rewrite this professional summary to better target a "${job.title}" role at ${job.company}.
 
 ORIGINAL SUMMARY: ${profile.summary}
 SKILLS: ${[...profile.skills.languages, ...profile.skills.frameworks].join(', ')}
@@ -124,10 +154,18 @@ JOB DESCRIPTION: ${job.description?.slice(0, 400) || 'Not available'}
 Write a 2-3 sentence professional summary that emphasizes the most relevant skills and experience for this specific role. Sound natural and confident.
 
 Summary only, nothing else.`,
-    }],
-    temperature: 0.3,
-    max_tokens: 150,
-  })
-
-  return res.choices[0].message.content || profile.summary
+      }],
+      temperature: 0.3,
+      max_tokens: 150,
+    })
+    return res.choices[0].message.content || profile.summary
+  } catch {
+    // Fallback to Gemini
+    try {
+      const result = await flashModel.generateContent(`Rewrite this professional summary for a "${job.title}" role: ${profile.summary}. Skills: ${[...profile.skills.languages, ...profile.skills.frameworks].join(', ')}. 2-3 sentences, natural tone.`)
+      return result.response.text().trim()
+    } catch {
+      return profile.summary
+    }
+  }
 }
